@@ -145,7 +145,11 @@ func (c *Client) subsystemRuns(name control.Subsystem) error {
 func (c *Client) applySubsystem(name control.Subsystem, on bool) {
 	switch name {
 	case control.SubsystemReconciler:
-		if set := c.reconcilerNow().Enable; set != nil {
+		r := c.reconcilerNow()
+		if drop := r.DropHold; !on && drop != nil {
+			drop()
+		}
+		if set := r.Enable; set != nil {
 			set(on)
 		}
 	case control.SubsystemSteering:

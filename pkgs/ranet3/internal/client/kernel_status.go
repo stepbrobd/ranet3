@@ -20,6 +20,8 @@ type Reconciler struct {
 	Status func() control.KernelStatus
 	// Enable stops and starts it, for the write path and for down and up
 	Enable func(bool)
+	// DropHold has its next stop, the operator's, take the down set a down leaves
+	DropHold func()
 	// Table hands it a reloaded cap.table with the overlay and the prefixes cap.route announces
 	Table func(kernel.Table, []schema.Prefix, []netip.Prefix) error
 	// Network wakes it for a change of the host's network
@@ -45,6 +47,7 @@ func ReconcilerOf(routes *kernel.Reconciler) Reconciler {
 	return Reconciler{
 		Status:    func() control.KernelStatus { return kernelStatus(routes) },
 		Enable:    routes.SetEnabled,
+		DropHold:  routes.DropHold,
 		Table:     routes.SetTable,
 		Network:   routes.NetworkChanged,
 		Endpoints: routes.EndpointsChanged,
@@ -93,6 +96,7 @@ func kernelStatus(routes *kernel.Reconciler) control.KernelStatus {
 		Skipped:         stats.Skipped,
 		Added:           stats.Added,
 		Removed:         stats.Removed,
+		Held:            stats.Held,
 		HoldPieces:      stats.HoldPieces,
 		HoldsWhole:      stats.HoldsWhole,
 		HoldPieceBudget: stats.HoldPieceBudget,

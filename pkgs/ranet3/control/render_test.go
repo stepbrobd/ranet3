@@ -578,6 +578,19 @@ func TestKernelLineNamesTheCoveredFamilies(t *testing.T) {
 	}
 }
 
+// The kernel line counts the overlay prefixes the down set holds, one in the
+// singular, and says nothing of it where it holds none
+func TestKernelLineCountsTheOverlayPrefixesTheDownSetHolds(t *testing.T) {
+	for held, want := range map[int]string{1: ", 1 overlay prefix held by the down set", 2: ", 2 overlay prefixes held by the down set"} {
+		if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", Held: held}); !strings.Contains(line, want) {
+			t.Errorf("with %d prefixes held the kernel line reads %q, want it to hold %q", held, line, want)
+		}
+	}
+	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "down set") {
+		t.Errorf("the kernel line reads %q with nothing held, want no clause of the down set", line)
+	}
+}
+
 // The kernel line counts the pieces the last pass put in place of the holds it
 // cut and the holds it left whole past the budget, which it gives, beside the
 // routes it installed and skipped, and says nothing of either where it has

@@ -441,6 +441,9 @@ type KernelStatus struct {
 	Skipped   int       `json:"skipped"`
 	Added     int       `json:"added"`
 	Removed   int       `json:"removed"`
+	// Held is the overlay prefixes the down set holds, while the reconciler
+	// is stopped by a down or until the first pass of a start holds them
+	Held int `json:"held,omitempty"`
 	// HoldPieces is the pieces the last pass's routes put in place of the
 	// holds it cut around the live routes inside them on macOS, a piece the
 	// platform refused among them
