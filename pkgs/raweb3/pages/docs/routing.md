@@ -553,7 +553,9 @@ announcement with a source, D from S. Under the destination-first ordering of
 [RFC 9079 section 4](https://www.rfc-editor.org/rfc/rfc9079.html#section-4) the
 mesh routes D to this node only for packets from S, so a reply to D from outside
 S would never come back through the mesh. With no `overlay`, no 5110 rule is
-installed.
+installed. While a node is down the rules at 32764 and 32765 of
+[the overlay while a node is down](#the-overlay-while-a-node-is-down) stand in
+place of these.
 
 #### Exit mode on Linux
 
@@ -883,8 +885,10 @@ These tables are where a lookup ends under the derived rules, and the other
 pages link here for it. They hold where `cap.table` is written and the
 reconciler is enabled, with every rule of the reconciler's last pass in place,
 no rule of another program in the policy database, and no route of another
-writer in `cap.table.id`'s table. `ranet3 debug route` names the rule and route
-a lookup of one packet ends on, as [debugging](development/debug.md) describes.
+writer in `cap.table.id`'s table. Where a lookup ends while a node is down is
+[the overlay while a node is down](#the-overlay-while-a-node-is-down).
+`ranet3 debug route` names the rule and route a lookup of one packet ends on, as
+[debugging](development/debug.md) describes.
 
 Where that does not hold, the reconciler does this:
 
@@ -1081,11 +1085,49 @@ fails no pass.
   endpoint.
 
 `ranet3 disable reconciler` withdraws every route, address and rule the
-reconciler installed, 5450 among them on Linux, and deletes the kill switch,
-[its chains and sets](#the-kill-switch-on-linux) on Linux and
+reconciler installed, 5450 and the down set among them on Linux, and deletes the
+kill switch, [its chains and sets](#the-kill-switch-on-linux) on Linux and
 [the rejects](#the-kill-switch-on-macos) on macOS, so the host's traffic leaves
 by the uplink until it is enabled again. `ranet3 enable reconciler` puts them
 back. Both are refused on a node with no `cap.table`.
+
+### The overlay while a node is down
+
+On Linux, `ranet3 down` and a stop of the daemon, a stop for the mesh's failure
+among them, first add 2 rules for each prefix of `overlay`, in its family and
+carrying `cap.table.proto`, and only then withdraw the routes, the addresses and
+every other rule. These are the down set, where `<n>` is the prefix's length:
+
+| Priority | Rule                                                  | What it does                                                           |
+| -------- | ----------------------------------------------------- | ---------------------------------------------------------------------- |
+| 32764    | `to <prefix> lookup main suppress_prefixlength <n-1>` | main's table to the prefix, its routes shorter than the prefix skipped |
+| 32765    | `to <prefix> unreachable`                             | refuses the rest, so a connect meets `Network is unreachable` at once  |
+
+32765 goes in first, so no lookup meets 32764 alone. Both sit just ahead of the
+kernel's rule for main at 32766, so while the down set stands a lookup to an
+overlay destination ends at a rule another program placed ahead of 32764, an
+`ip rule add` written with no priority among them, then at a route of main as
+long as the overlay prefix or longer, and otherwise at 32765: main's default, a
+shorter route of main covering the prefix and the uplink's own network where it
+covers the prefix are refused like the rest. A destination outside `overlay`
+meets neither rule, and nothing is written into main.
+
+The next start keeps the down set until a pass has added every rule it derives,
+5110 among them, and holds a route of the mesh's table at each overlay prefix,
+its hold, a carve-out's throw or the mesh's own route, and then deletes it, so a
+lookup to an overlay destination meets 5110 or the down set throughout a
+restart. A pass whose add fails keeps it for the next. A start whose `overlay`
+no longer holds a prefix deletes that prefix's 2 rules at once.
+`ranet3 disable reconciler` withdraws the down set with the rest, the way to
+clear it from a running daemon, and every stop after it adds none until
+`ranet3 enable reconciler`. A start with no `cap.table` deletes nothing and logs
+`kernel found rules an earlier instance left to hold overlay prefixes, which refuse those prefixes until they are deleted`
+with the rules in `rules` and the commands that delete them in `fix`. A reboot
+clears the down set, and a `SIGKILL` adds none and leaves the routes and rules
+of the last pass but those the tun takes with it. While the down set stands the
+`Kernel` line of `ranet3 status` counts its overlay prefixes, which `--json`
+carries as `kernel.held`. macOS and the BSDs have no rule database and hold
+nothing while down.
 
 ### Routes that count as a default
 
@@ -1814,7 +1856,8 @@ These commands show the routes. [Command line](cli.md) lists their flags.
 | `kernel reconciler started`                                                                                                                                    | info  | the reconciler starts, naming where it writes                                                                                                                                                   |
 | `kernel routes reconciled`                                                                                                                                     | info  | a pass added or removed a route                                                                                                                                                                 |
 | `kernel changed the endpoints it cuts out of the mesh's routes or the routes it scopes beneath the host's`                                                     | info  | on macOS, a pass began or stopped cutting an address out or scoping a route beneath the host's, with `cut`, `restored`, `scoped` and `unscoped`, once for each change                           |
-| `kernel reconciler withdrawn`                                                                                                                                  | info  | shutdown or `ranet3 disable reconciler` removed the routes, addresses and rules                                                                                                                 |
+| `kernel reconciler withdrawn`                                                                                                                                  | info  | shutdown, `ranet3 down` or `ranet3 disable reconciler` removed the routes, addresses and rules, with `held`, the overlay prefixes the down set it left holds                                    |
+| `kernel found rules an earlier instance left to hold overlay prefixes, which refuse those prefixes until they are deleted`                                     | warn  | a start with no `cap.table` found the down set, with `rules` and `fix`                                                                                                                          |
 | `kernel finds an overlay prefix answered outside the mesh's table`                                                                                             | warn  | an overlay prefix's lookup became taken, or a taken one's answer changed                                                                                                                        |
 | `kernel finds an overlay prefix answered through the tun or by a hold again`                                                                                   | info  | an overlay prefix's lookup stopped being taken                                                                                                                                                  |
 | `kernel finds the underlay's mark answered through the tun`                                                                                                    | warn  | a send's lookup under the mark became taken, or a taken one's answer changed                                                                                                                    |

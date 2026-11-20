@@ -53,7 +53,13 @@ The reconciler writes its rules in 2 blocks, 5100 to 5190 and 5400 to 5490, on
 either side of Tailscale's 5210 to 5270, which Tailscale uses at its default
 base of 5200, as [routing](routing.md#policy-rules-on-linux) lists them.
 [Where a lookup ends](routing.md#where-a-lookup-ends-on-linux) gives where each
-lookup ends while no rule of another program is in the policy database.
+lookup ends while no rule of another program is in the policy database. While a
+node is down, and after a stop, the reconciler holds 2 rules for each prefix of
+`overlay` at 32764 and 32765, just ahead of main at 32766, as
+[the overlay while a node is down](routing.md#the-overlay-while-a-node-is-down)
+gives. Another program's rule ahead of 32764 answers first, a rule added with no
+priority among them, which the kernel puts at 32763, and one at 32765 or behind
+meets the refusal.
 
 ### The underlay's mark
 

@@ -4,7 +4,7 @@
 title: "Command line"
 description: "Every ranet3 command and flag, the signals the daemon takes and the exit status of each command."
 created: 2026-10-16
-updated: 2026-11-15
+updated: 2026-11-20
 order: 75
 ---
 
@@ -143,7 +143,11 @@ exits 1. The page of each writer gives what a refusal leaves of it:
 - `down` withdraws [the kill switch's](routing.md#the-kill-switch-on-linux)
   rules and chains, or on macOS
   [its rejects](routing.md#the-kill-switch-on-macos), with the rest of the
-  reconciler's, as a clean stop does, and `up` writes them again.
+  reconciler's, as a clean stop does, and `up` writes them again. On Linux both
+  leave the down set of
+  [the overlay while a node is down](routing.md#the-overlay-while-a-node-is-down),
+  which the `Kernel` line of `status` counts as overlay prefixes held, and
+  `disable reconciler` withdraws it.
 - `debug netmon` lists each family's links outside the mesh with their addresses
   and point-to-point far ends, as [moving hosts](platforms.md#moving-hosts)
   gives them, the links [exit mode](routing.md#exit-mode-on-linux) derives its

@@ -711,6 +711,16 @@ that names its interface falls back to, as
 exit serving Macs advertises the `/0` only, as
 [exit nodes](../exit-nodes.md#what-to-advertise) describes.
 
+**While a Linux node is down, its overlay refuses an operator's route shorter
+than an overlay prefix.** The down set of
+[the overlay while a node is down](../routing.md#the-overlay-while-a-node-is-down)
+lets main answer only with a route as long as the prefix or longer, since the
+kernel cannot tell a shorter route an operator wrote from the uplink's own
+network where it covers the prefix, which would otherwise take a leaf's address.
+A rule ahead of main at 32766 still answers first. A reboot clears the down set,
+so from the boot until the next start an overlay destination leaves by the
+host's routes, main's default among them.
+
 ## The kill switch on macOS
 
 [The kill switch on macOS](../routing.md#the-kill-switch-on-macos) is reject
