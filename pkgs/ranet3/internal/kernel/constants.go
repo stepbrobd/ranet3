@@ -84,6 +84,19 @@ const (
 	priorityMeshEnd = 5490
 )
 
+// The priorities of the down set, which holds each overlay prefix while the
+// reconciler is stopped for a down node or a shutdown, just ahead of the
+// kernel's rule for main at 32766, so every rule an operator places ahead of
+// main answers first.
+const (
+	// priorityDownMain looks main up to each overlay prefix for a route as long
+	// as the prefix or longer.
+	priorityDownMain = 32764
+	// priorityDownRefused fails as unreachable each lookup to an overlay prefix
+	// that priorityDownMain passed on.
+	priorityDownRefused = 32765
+)
+
 // linuxLoopback is the name Linux gives its loopback link, the input every
 // lookup of the host's own traffic carries, which the policy rules select by
 // iif. Only linux installs a rule (see ruler), so every build derives and walks

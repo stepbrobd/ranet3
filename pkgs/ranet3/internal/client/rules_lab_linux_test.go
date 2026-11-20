@@ -510,7 +510,7 @@ func TestTUNDerivedRulesSendEachSocketWhereModeOffSays(t *testing.T) {
 		}
 		proto := uint8(kernel.DefaultProtocol)
 		for _, rule := range rules {
-			if rule.protocol == proto {
+			if rule.protocol == proto && !heldByDownSet(rule) {
 				t.Errorf("the stop left the rule %s", rule)
 			}
 		}
@@ -990,4 +990,10 @@ func rulesKeyOf(raw []byte) (rulesKey, netip.Addr, bool) {
 		return rulesKey{"echo", int(binary.BigEndian.Uint16(l4[4:]))}, source, true
 	}
 	return rulesKey{}, netip.Addr{}, false
+}
+
+// heldByDownSet reports whether rule is one of the down set a stop leaves, the reconciler's at 32764 or 32765, which the routing
+// page's "The overlay while a node is down" tells
+func heldByDownSet(rule kernelRule) bool {
+	return rule.protocol == kernel.DefaultProtocol && (rule.priority == 32764 || rule.priority == 32765)
 }

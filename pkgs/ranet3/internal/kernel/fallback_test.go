@@ -283,9 +283,10 @@ func logged(t *testing.T) *strings.Builder {
 }
 
 // A Run the mesh's failure stops withdraws every route, address and rule of
-// its own and leaves the switch, warning once with the switch's state, and the
-// next Run reads the switch back as written and keeps it while it puts the
-// rules back. A Run stopped plainly deletes it with no warning.
+// its own but the down set and leaves the switch, warning once with the
+// switch's state, and the next Run reads the switch back as written and keeps
+// it while it puts the rules back. A Run stopped plainly deletes it with no
+// warning.
 func TestFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 	network := &hostNetwork{state: exitPassHost("docker0")}
 	tbl := Table{Addresses: prefixes(prefix("192.0.2.1/32"), prefix("3fff::1/128"))}.WithMode(&ExitMode{Fallback: FallbackNone, LAN: exitPassLAN}).Normalized()
@@ -306,10 +307,10 @@ func TestFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 	}
 
 	stop := start()
-	written := held().rules
+	written, down := held().rules, len(downRules(exitPassOverlay))
 	stop(ErrMeshFailed)
-	if left := held(); !left.table || left.routes+left.addresses+left.rules > 0 {
-		t.Fatalf("the failed mesh's stop left %+v, want the table alone", left)
+	if left := held(); !left.table || left.routes+left.addresses > 0 || left.rules != down {
+		t.Fatalf("the failed mesh's stop left %+v, want the table and the %d rules of the down set alone", left, down)
 	}
 	if n := strings.Count(said.String(), leftLine); n != 1 || !strings.Contains(said.String(), leftLine+fakeWhere+" state=holding") {
 		t.Errorf("the failed mesh's stop warned %d times, want once with the state holding:\n%s", n, said)
@@ -319,8 +320,8 @@ func TestFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 		t.Errorf("the next start holds %+v, want the table kept from the one write before and %d rules", left, written)
 	}
 	stop(nil)
-	if left := held(); left.table || left.routes+left.addresses+left.rules > 0 {
-		t.Errorf("a plain stop left %+v, want nothing", left)
+	if left := held(); left.table || left.routes+left.addresses > 0 || left.rules != down {
+		t.Errorf("a plain stop left %+v, want the %d rules of the down set alone", left, down)
 	}
 	if n := strings.Count(said.String(), leftLine); n != 1 {
 		t.Errorf("after a plain stop the warning was written %d times, want the failed stop's alone", n)

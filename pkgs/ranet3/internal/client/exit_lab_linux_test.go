@@ -723,7 +723,7 @@ func TestTUNExitModeSendsEachSocketWhereModeTwoSays(t *testing.T) {
 			t.Fatalf("read the leaf back: %v", err)
 		}
 		for _, rule := range rules {
-			if rule.protocol == kernel.DefaultProtocol {
+			if rule.protocol == kernel.DefaultProtocol && !heldByDownSet(rule) {
 				t.Errorf("the stop left the rule %s", rule)
 			}
 		}

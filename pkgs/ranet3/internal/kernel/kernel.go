@@ -747,6 +747,13 @@ type Reconciler struct {
 	enabled   atomic.Bool
 	wake      chan struct{}
 	withdrawn bool
+	// cleared is the operator's stop (DropHold), touched from outside the
+	// reconcile goroutine. hold is whether the loop's next withdrawal leaves the
+	// down set, and once it succeeded whether it did, and held the overlay
+	// prefixes it left the down set holding, both the loop's own.
+	cleared atomic.Bool
+	hold    bool
+	held    int
 	// next is the capability SetTable accepted last, which reload wakes the loop to take
 	next   atomic.Pointer[accepted]
 	reload chan struct{}
@@ -840,6 +847,9 @@ type Stats struct {
 	Exit *ExitStatus
 	// Path is cap.exit via's path as this pass judged it, nil outside mode 3
 	Path *PathStatus
+	// Held is the overlay prefixes the down set holds once this pass or
+	// withdrawal ended
+	Held int
 	Err  string
 }
 
@@ -1046,23 +1056,33 @@ func (r *Reconciler) DerivedRules() []DumpedRule {
 }
 
 // SetEnabled stops or starts this reconciler while it runs. Stopping withdraws
-// every route, address and rule it installed and the kill switch, and starting
-// puts back on the next pass what that pass asks for, which is idempotent like
-// every other pass. A table left holding routes nobody maintains is the state
-// a stop exists to avoid, so the withdrawal is part of it rather than a
-// separate ask.
+// every route, address and rule it installed and the kill switch, and leaves
+// the down set in their place unless DropHold came first. Starting puts back on
+// the next pass what that pass asks for, which is idempotent like every other
+// pass, and takes the down set once that pass holds the overlay. A table left
+// holding routes nobody maintains is the state a stop exists to avoid, so the
+// withdrawal is part of it rather than a separate ask.
 //
 // The withdrawal runs on the reconcile goroutine rather than here, because
 // every field it touches belongs to that goroutine alone. This records the
 // request and wakes the loop, so a caller returns before the kernel has
 // caught up and reads Stats to see that it has.
 func (r *Reconciler) SetEnabled(on bool) {
+	if on {
+		r.cleared.Store(false)
+	}
 	r.enabled.Store(on)
 	select {
 	case r.wake <- struct{}{}:
 	default:
 	}
 }
+
+// DropHold has the stop that follows it, the operator's, withdraw the down set
+// with the rest, and every stop after it until SetEnabled(true). It acts at the
+// SetEnabled(false) that follows it, whose wake has a reconciler already
+// stopped withdraw the down set then.
+func (r *Reconciler) DropHold() { r.cleared.Store(true) }
 
 // FirstPass is closed once Run's first pass has ended, or its first
 // withdrawal for a reconciler started disabled, whether or not it failed
@@ -1149,8 +1169,8 @@ func (r *Reconciler) adopt() bool {
 }
 
 // Run reconciles until ctx is canceled, then withdraws everything this
-// reconciler installed, as withdraw gives for ctx's cause, and closes its
-// netlink sockets. It is called once.
+// reconciler installed, as withdraw gives for ctx's cause, leaving the down set
+// unless DropHold stopped it, and closes its netlink sockets. It is called once.
 //
 // Withdrawal is best effort by construction: the caller usually cancels the
 // mesh at the same moment, and the kernel drops routes and addresses on its
@@ -1192,10 +1212,12 @@ func (r *Reconciler) Run(ctx context.Context) error {
 			// reporting the routes of the last pass that ran.
 			// a withdrawal that failed is still owed
 			// it is retried on the backoff a failed pass takes rather than reported done
-			if !r.withdrawn {
+			// a stop that held and is now the operator's withdraws again to take the down set
+			if hold := !r.cleared.Load(); !r.withdrawn || r.hold != hold {
 				started := time.Now()
+				r.hold = hold
 				err := r.withdraw(nil)
-				r.routePass = Stats{}
+				r.routePass = Stats{Held: r.held}
 				r.recordPass(err, time.Since(started))
 				grace.Stop()
 				if err != nil {
@@ -1267,6 +1289,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	// anyway rather than skipping it on the flag keeps one exit path: what the
 	// kernel holds is read back rather than remembered, so anything installed
 	// between the stop and here still leaves.
+	r.hold = !r.cleared.Load()
 	return errors.Join(r.withdraw(context.Cause(ctx)), r.plat.Close())
 }
 
@@ -1457,6 +1480,7 @@ func (r *Reconciler) applyRules(snapshot []sadr.Route[*netstack.Peer], exit exit
 	}
 	ruleSet := derivedRules(r.table.ID, r.rt.Overlay, r.ownPrefixes(snapshot), exit)
 	r.derived.Store(&ruleSet)
+	down := downRules(r.rt.Overlay)
 	actual, err := r.rules.Rules()
 	if err != nil {
 		return fmt.Errorf("list rules: %w", err)
@@ -1468,7 +1492,7 @@ func (r *Reconciler) applyRules(snapshot []sadr.Route[*netstack.Peer], exit exit
 		wanted[rule] = true
 	}
 	for _, rule := range actual {
-		if wanted[rule] {
+		if wanted[rule] || slices.Contains(down, rule) {
 			continue
 		}
 		if err := r.rules.DelRule(rule); err != nil {
@@ -1481,14 +1505,35 @@ func (r *Reconciler) applyRules(snapshot []sadr.Route[*netstack.Peer], exit exit
 	for _, rule := range actual {
 		present[rule] = true
 	}
+	failed := false
 	for _, rule := range ruleSet {
 		if present[rule] {
 			continue
 		}
 		if err := r.rules.AddRule(rule); err != nil {
 			errs = append(errs, fmt.Errorf("add rule %s: %w", rule, err))
+			failed = true
 		} else {
 			added++
+		}
+	}
+	// the down set a stop left goes once 5110 and the routes at each overlay prefix stand in its place
+	release := !failed && r.holdsOverlay(down)
+	r.routePass.Held = 0
+	for _, rule := range down {
+		if !present[rule] {
+			continue
+		}
+		if release {
+			err := r.rules.DelRule(rule)
+			if err == nil {
+				removed++
+				continue
+			}
+			errs = append(errs, fmt.Errorf("delete rule %s: %w", rule, err))
+		}
+		if rule.Priority == priorityDownRefused {
+			r.routePass.Held++
 		}
 	}
 	if added > 0 || removed > 0 {
@@ -2197,10 +2242,25 @@ func (r *Reconciler) applyAddresses() (tun []netip.Prefix, listed bool, err erro
 // to say in a warning whether one is there.
 // Routes are read back rather than remembered, so routes an earlier crashed
 // instance left behind go with them.
+// Where r.hold is set it adds the down set before anything leaves and leaves
+// it, so a lookup to an overlay prefix meets it from the moment 5110 and the
+// overlay's holds are gone.
 func (r *Reconciler) withdraw(cause error) error {
 	r.report(nil)
 	r.reportExit(nil)
 	var errs []error
+	var down []Rule
+	r.held = 0
+	if r.rules != nil && r.hold {
+		down = downRules(r.rt.Overlay)
+		for _, rule := range down {
+			if err := r.rules.AddRule(rule); err != nil {
+				errs = append(errs, fmt.Errorf("add rule %s: %w", rule, err))
+			} else if rule.Priority == priorityDownRefused {
+				r.held++
+			}
+		}
+	}
 	routes, err := r.plat.Routes()
 	// the capture stands where the listing failed or a capturing route's delete does
 	r.capturing = r.capturing && err != nil
@@ -2254,6 +2314,9 @@ func (r *Reconciler) withdraw(cause error) error {
 			errs = append(errs, fmt.Errorf("list rules: %w", err))
 		}
 		for _, rule := range held {
+			if slices.Contains(down, rule) {
+				continue
+			}
 			if err := r.rules.DelRule(rule); err != nil {
 				errs = append(errs, fmt.Errorf("delete rule %s: %w", rule, err))
 			} else {
@@ -2286,7 +2349,7 @@ func (r *Reconciler) withdraw(cause error) error {
 	}
 	// Every count is of something that left, so a line reporting nothing
 	// removed is a shutdown that removed nothing.
-	slog.Info("kernel reconciler withdrawn", "routes", withdrawn, "addresses", len(removed), "rules", rules)
+	slog.Info("kernel reconciler withdrawn", "routes", withdrawn, "addresses", len(removed), "rules", rules, "held", r.held)
 	return errors.Join(errs...)
 }
 

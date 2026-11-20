@@ -758,7 +758,7 @@ func TestTUNExitPathLeavesByTheNamedExitAndNoOther(t *testing.T) {
 			t.Errorf("the stop left the kill switch's chains among %q in the table %s", chains, nftables.Table)
 		}
 		for _, rule := range rules {
-			if rule.protocol == kernel.DefaultProtocol {
+			if rule.protocol == kernel.DefaultProtocol && !heldByDownSet(rule) {
 				t.Errorf("the stop left the rule %s", rule)
 			}
 		}

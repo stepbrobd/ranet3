@@ -4,8 +4,12 @@
 package kernel
 
 import (
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/netip"
 	"slices"
+	"strings"
 
 	"ranet3.com/pkgs/ranet3/internal/netstack"
 	"ranet3.com/pkgs/ranet3/sadr"
@@ -104,6 +108,80 @@ func derivedRules(id schema.TableID, overlay []schema.Prefix, own []netip.Prefix
 		}
 	}
 	return out
+}
+
+// downRules is the down set, routing.md's "The overlay while a node is down":
+// for each overlay prefix of length n, in its family, 32765 refusing it and
+// 32764 looking main up to it for a route of length n or longer, the refusal
+// first, the order a stop adds them in, so no lookup to the prefix meets 32764
+// alone and leaves by a shorter route of main. familyPrefixes holds no /0, so
+// n-1 is never negative.
+func downRules(overlay []schema.Prefix) []Rule {
+	var out []Rule
+	for _, family := range []Family{FamilyIPv4, FamilyIPv6} {
+		for _, prefix := range familyPrefixes(family, SchemaPrefixes(overlay)) {
+			to := schema.PrefixFrom(prefix)
+			out = append(out,
+				Rule{Family: family, Priority: priorityDownRefused, To: to, action: actionUnreachable},
+				Rule{Family: family, Priority: priorityDownMain, To: to, Table: schema.TableMain, suppress: SuppressUpTo(prefix.Bits() - 1)},
+			)
+		}
+	}
+	return out
+}
+
+// holdsOverlay reports whether the routes the last pass that listed them left
+// hold a route for every source at the prefix of each refusal of down: the
+// overlay's hold, a carve-out's throw or the mesh's own route.
+func (r *Reconciler) holdsOverlay(down []Rule) bool {
+	at := make(map[netip.Prefix]bool, len(r.installed))
+	for route := range r.installed {
+		if !route.Source.IsValid() {
+			at[route.Destination] = true
+		}
+	}
+	return !slices.ContainsFunc(down, func(rule Rule) bool { return rule.Priority == priorityDownRefused && !at[rule.To.Prefix] })
+}
+
+// WarnHeldOverlay warns once, for a start that runs no reconciler to remove
+// them, of each rule a stop left holding an overlay prefix, in the down set's
+// shape under any protocol, with the command that deletes it, and removes
+// nothing. Only linux holds policy rules.
+func WarnHeldOverlay() {
+	dumped, err := DumpRules()
+	if errors.Is(err, ErrUnsupported) {
+		return
+	}
+	if err != nil {
+		slog.Warn("kernel could not list the policy rules to find a down set an earlier instance may have left", "err", err)
+		return
+	}
+	warnHeldOverlay(dumped)
+}
+
+// warnHeldOverlay is WarnHeldOverlay's warning about the rules dumped holds
+func warnHeldOverlay(dumped []DumpedRule) {
+	var rules, fix []string
+	for _, held := range dumped {
+		if !held.To.IsValid() {
+			continue
+		}
+		for _, rule := range downRules([]schema.Prefix{schema.PrefixFrom(held.To)}) {
+			if rule.dumped(held.Protocol) != held {
+				continue
+			}
+			version := "4"
+			if rule.Family == FamilyIPv6 {
+				version = "6"
+			}
+			rules = append(rules, fmt.Sprintf("%s protocol %d", rule, held.Protocol))
+			fix = append(fix, fmt.Sprintf("ip -%s rule del priority %d to %s protocol %d", version, rule.Priority, rule.To, held.Protocol))
+		}
+	}
+	if len(rules) > 0 {
+		slog.Warn("kernel found rules an earlier instance left to hold overlay prefixes, which refuse those prefixes until they are deleted",
+			"rules", strings.Join(rules, ", "), "fix", strings.Join(fix, "; "))
+	}
 }
 
 // exitView is mode 2 or 3 as a pass derives its rules: the host's links

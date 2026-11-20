@@ -574,7 +574,7 @@ func TestTUNExitEgressesBothModesThroughItsOneTun(t *testing.T) {
 			return err
 		}
 		for _, rule := range rules {
-			if rule.protocol == kernel.DefaultProtocol {
+			if rule.protocol == kernel.DefaultProtocol && !heldByDownSet(rule) {
 				return fmt.Errorf("a rule of the reconciler's outlived it: %v", rule)
 			}
 		}
