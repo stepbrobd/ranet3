@@ -4,7 +4,7 @@
 title: "Routing"
 description: "How Babel picks a route, and how the reconciler puts it into the kernel."
 created: 2026-10-16
-updated: 2026-11-20
+updated: 2026-11-21
 order: 45
 ---
 
@@ -1095,39 +1095,72 @@ back. Both are refused on a node with no `cap.table`.
 
 On Linux, `ranet3 down` and a stop of the daemon, a stop for the mesh's failure
 among them, first add 2 rules for each prefix of `overlay`, in its family and
-carrying `cap.table.proto`, and only then withdraw the routes, the addresses and
-every other rule. These are the down set, where `<n>` is the prefix's length:
+carrying `cap.table.proto`. These are the down set, where `<n>` is the prefix's
+length:
 
 | Priority | Rule                                                  | What it does                                                           |
 | -------- | ----------------------------------------------------- | ---------------------------------------------------------------------- |
 | 32764    | `to <prefix> lookup main suppress_prefixlength <n-1>` | main's table to the prefix, its routes shorter than the prefix skipped |
-| 32765    | `to <prefix> unreachable`                             | refuses the rest, so a connect meets `Network is unreachable` at once  |
+| 32765    | `to <prefix> unreachable`                             | refuses the rest with `Network is unreachable`                         |
 
 32765 goes in first, so no lookup meets 32764 alone. Both sit just ahead of the
-kernel's rule for main at 32766, so while the down set stands a lookup to an
-overlay destination ends at a rule another program placed ahead of 32764, an
-`ip rule add` written with no priority among them, then at a route of main as
-long as the overlay prefix or longer, and otherwise at 32765: main's default, a
-shorter route of main covering the prefix and the uplink's own network where it
-covers the prefix are refused like the rest. A destination outside `overlay`
-meets neither rule, and nothing is written into main.
+kernel's rule for main at 32766. Another program's rule ahead of 32764 answers
+first, and of two rules at one priority the older answers first. Past those
+rules, a lookup to an overlay destination ends at a route of main as long as the
+overlay prefix or longer, and otherwise at 32765. Main's default, a shorter
+route of main covering the prefix and the uplink's own network where it covers
+the prefix are refused like the rest. A destination outside `overlay` meets
+neither rule, and nothing is written into main. An IPv4 socket bound to a
+device, by `SO_BINDTODEVICE` or `ping -I`, whose lookup 32765 refuses sends
+on-link out of that device all the same, as it does while the node runs. An IPv6
+socket bound to a device meets the refusal.
+
+Once the down set is in, the stop deletes the reconciler's other rules from the
+last priority to the first, each goto just ahead of the rule it jumps to, and
+then its routes and addresses. Every rule that looks main up goes before 5110,
+so until 5110 goes a lookup to an overlay destination meets the mesh's table as
+it does while the node runs, and after it the down set. A destination outside
+`overlay` meets the rules not yet deleted and then main at 32766, where it ends
+after the stop too: a LAN destination, once 5410 is gone and 5110 still stands,
+meets main at 32766. Where the add of a rule of the down set fails, the stop
+leaves that family's routes and rules as a kill leaves them, its error says so,
+and `ranet3 down` adds the rule again on its retry.
+
+A cached IPv6 route exception of length 128, which a `Packet Too Big` leaves on
+a route of main shorter than the prefix, passes 32764 until it expires, 10
+minutes after it was made, and `ip -6 route flush cache` clears it. IPv4 keeps
+no such exception, so 32765 refuses it.
 
 The next start keeps the down set until a pass has added every rule it derives,
 5110 among them, and holds a route of the mesh's table at each overlay prefix,
-its hold, a carve-out's throw or the mesh's own route, and then deletes it, so a
-lookup to an overlay destination meets 5110 or the down set throughout a
-restart. A pass whose add fails keeps it for the next. A start whose `overlay`
-no longer holds a prefix deletes that prefix's 2 rules at once.
-`ranet3 disable reconciler` withdraws the down set with the rest, the way to
-clear it from a running daemon, and every stop after it adds none until
-`ranet3 enable reconciler`. A start with no `cap.table` deletes nothing and logs
-`kernel found rules an earlier instance left to hold overlay prefixes, which refuse those prefixes until they are deleted`
-with the rules in `rules` and the commands that delete them in `fix`. A reboot
-clears the down set, and a `SIGKILL` adds none and leaves the routes and rules
-of the last pass but those the tun takes with it. While the down set stands the
-`Kernel` line of `ranet3 status` counts its overlay prefixes, which `--json`
-carries as `kernel.held`. macOS and the BSDs have no rule database and hold
-nothing while down.
+its hold, a carve-out's throw or the mesh's own route. Then it deletes the down
+set, so a lookup to an overlay destination meets 5110 or the down set throughout
+a restart. A pass whose add fails keeps the down set for the next. A start whose
+`overlay` changed deletes the down set of the old prefixes at the same point,
+once 5110 for the new ones stands. A reload while the node is down that changes
+`overlay` adds the down set of the new prefixes and then deletes the old one's.
+
+`ranet3 disable reconciler` withdraws the down set with the rest. It is the way
+to clear the down set from a running daemon. Every stop after it adds none until
+`ranet3 enable reconciler`. A reboot clears the down set. A `SIGKILL` adds none
+and leaves the routes and rules of the last pass but those the tun takes with
+it.
+
+A start with no `cap.table` deletes nothing. It warns once, as
+[watching it](#watching-it) gives, of each rule of the down set of its `overlay`
+under protocol 155. A rule left under another protocol, after a change of
+`cap.table.proto`, or at a prefix the file no longer holds goes unnamed. Such a
+rule stays after an uninstall too.
+`ip -4 rule del priority 32765 to <prefix>
+protocol <proto>`, and the same for
+32764 and with `-6`, deletes each.
+
+The `Kernel` line of `ranet3 status` counts the overlay prefixes refused while
+down, which `--json` carries as `kernel.held`. While the node is down it reads
+the prefixes whose refusal the stop added. While it runs it reads 0 once the
+first pass took the down set, and before that the prefixes that pass found. An
+operator's deletion of the rules while the node is down shows at the next start.
+macOS and the BSDs have no rule database, hold nothing while down and read 0.
 
 ### Routes that count as a default
 
@@ -1856,8 +1889,8 @@ These commands show the routes. [Command line](cli.md) lists their flags.
 | `kernel reconciler started`                                                                                                                                    | info  | the reconciler starts, naming where it writes                                                                                                                                                   |
 | `kernel routes reconciled`                                                                                                                                     | info  | a pass added or removed a route                                                                                                                                                                 |
 | `kernel changed the endpoints it cuts out of the mesh's routes or the routes it scopes beneath the host's`                                                     | info  | on macOS, a pass began or stopped cutting an address out or scoping a route beneath the host's, with `cut`, `restored`, `scoped` and `unscoped`, once for each change                           |
-| `kernel reconciler withdrawn`                                                                                                                                  | info  | shutdown, `ranet3 down` or `ranet3 disable reconciler` removed the routes, addresses and rules, with `held`, the overlay prefixes the down set it left holds                                    |
-| `kernel found rules an earlier instance left to hold overlay prefixes, which refuse those prefixes until they are deleted`                                     | warn  | a start with no `cap.table` found the down set, with `rules` and `fix`                                                                                                                          |
+| `kernel reconciler withdrawn`                                                                                                                                  | info  | shutdown, `ranet3 down` or `ranet3 disable reconciler` removed the routes, addresses and rules, with `held`, the overlay prefixes whose refusal it added                                        |
+| `kernel found rules an earlier instance left to hold overlay prefixes, which refuse those prefixes until they are deleted`                                     | warn  | a start with no `cap.table` found rules of the down set of its `overlay` under protocol 155, with `rules` and `fix`                                                                             |
 | `kernel finds an overlay prefix answered outside the mesh's table`                                                                                             | warn  | an overlay prefix's lookup became taken, or a taken one's answer changed                                                                                                                        |
 | `kernel finds an overlay prefix answered through the tun or by a hold again`                                                                                   | info  | an overlay prefix's lookup stopped being taken                                                                                                                                                  |
 | `kernel finds the underlay's mark answered through the tun`                                                                                                    | warn  | a send's lookup under the mark became taken, or a taken one's answer changed                                                                                                                    |

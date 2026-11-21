@@ -4,7 +4,7 @@
 title: "Sharing a host"
 description: "Sharing a host with other routing daemons, firewalls and VPNs."
 created: 2026-09-12
-updated: 2026-11-20
+updated: 2026-11-21
 order: 110
 ---
 
@@ -57,9 +57,8 @@ lookup ends while no rule of another program is in the policy database. While a
 node is down, and after a stop, the reconciler holds 2 rules for each prefix of
 `overlay` at 32764 and 32765, just ahead of main at 32766, as
 [the overlay while a node is down](routing.md#the-overlay-while-a-node-is-down)
-gives. Another program's rule ahead of 32764 answers first, a rule added with no
-priority among them, which the kernel puts at 32763, and one at 32765 or behind
-meets the refusal.
+gives. Another program's rule ahead of 32764 answers first, and of two rules at
+one priority the older answers first.
 
 ### The underlay's mark
 
