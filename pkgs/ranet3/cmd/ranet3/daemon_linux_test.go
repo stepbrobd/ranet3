@@ -43,6 +43,7 @@ import (
 	kernelexit "ranet3.com/pkgs/ranet3/internal/egress/kernel"
 	"ranet3.com/pkgs/ranet3/internal/events"
 	"ranet3.com/pkgs/ranet3/internal/kernel"
+	"ranet3.com/pkgs/ranet3/internal/kernel/kerneltest"
 	"ranet3.com/pkgs/ranet3/internal/netlink"
 	"ranet3.com/pkgs/ranet3/internal/netnstest"
 	"ranet3.com/pkgs/ranet3/internal/netstack"
@@ -326,7 +327,7 @@ func leftNothing(t *testing.T, f *daemonFiles, was beforeStart) {
 		t.Fatal(err)
 	}
 	// the tests of one binary share its namespace, so the down set an earlier test's stop left may be there or not
-	extra, _ := kernel.NotDownSet(rules, daemonOverlay, kernel.DefaultProtocol)
+	extra, _ := kerneltest.NotDownSet(rules, daemonOverlay)
 	for _, rule := range extra {
 		t.Errorf("the rule %+v is still there", rule)
 	}
@@ -908,7 +909,7 @@ func TestDaemonWithNoReconcilerWarnsOfTheDownSetLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extra, missing := kernel.NotDownSet(rules, daemonOverlay, kernel.DefaultProtocol); len(extra)+len(missing) != 0 {
+	if extra, missing := kerneltest.NotDownSet(rules, daemonOverlay); len(extra)+len(missing) != 0 {
 		t.Fatalf("the stop left %+v beside the down set and lacks %+v of it", extra, missing)
 	}
 	var second atomic.Pointer[events.Bus]
@@ -939,7 +940,7 @@ func TestDaemonWithNoReconcilerWarnsOfTheDownSetLeft(t *testing.T) {
 	if rules, err = kernel.DumpRules(); err != nil {
 		t.Fatal(err)
 	}
-	if extra, missing := kernel.NotDownSet(rules, daemonOverlay, kernel.DefaultProtocol); len(extra)+len(missing) != 0 {
+	if extra, missing := kerneltest.NotDownSet(rules, daemonOverlay); len(extra)+len(missing) != 0 {
 		t.Errorf("the start with no reconciler left %+v beside the down set and lacks %+v of it", extra, missing)
 	}
 	leftNothing(t, f, was)
