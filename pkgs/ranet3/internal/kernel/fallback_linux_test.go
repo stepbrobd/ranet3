@@ -1343,7 +1343,7 @@ func TestNetlinkFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 		if err := errors.Join(err, listErr, ruleErr, routeErr, addressErr); err != nil {
 			t.Fatalf("read the namespace back: %v", err)
 		}
-		down := len(rules) == len(downRules(exitPassOverlay)) && !slices.ContainsFunc(downRules(exitPassOverlay), func(rule Rule) bool { return !slices.Contains(rules, rule) })
+		down := sameRules(rules, downRules(exitPassOverlay))
 		out = leftover{read: read, listed: listed, down: down, rules: len(rules), routes: len(routes)}
 		for _, address := range addresses {
 			if slices.Contains(first.addresses, address) {

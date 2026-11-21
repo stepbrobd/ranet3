@@ -1209,7 +1209,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 			// a withdrawal that failed is still owed
 			// it is retried on the backoff a failed pass takes rather than reported done
 			// a stop that held and is now the operator's withdraws again to take the down set
-			if !r.withdrawn || r.dropHold.Load() && r.routePass.Held > 0 {
+			if !r.withdrawn || (r.dropHold.Load() && r.routePass.Held > 0) {
 				started := time.Now()
 				r.routePass = Stats{}
 				err := r.withdraw(errStopped)
@@ -2247,15 +2247,11 @@ var errStopped = errors.New("stopped over the control socket")
 // instance left behind go with them.
 //
 // A withdrawal with a cause adds the down set before anything leaves, unless
-// DropHold came first, and leaves it. A family whose down set did not all go in
-// keeps its routes and rules as a kill leaves them, and so does a family whose
-// rules could not all be listed or deleted, from its first delete that failed,
-// and the error says so. The rules go before the routes, from the last priority
-// to the first with each goto ahead of the nop it lands on, so 5110 and the
-// overlay's holds go after every rule that looks main up, and from the moment
-// the down set is in a lookup to an overlay prefix meets 5110 and the mesh's
-// table, whose carve-out throws pass it on as they do while running, or the down
-// set.
+// DropHold came first, and leaves it.
+// A family whose down set did not all go in, or whose rules could not all be
+// listed or deleted, keeps its routes and every rule not deleted, and the error
+// says so.
+// The rules go in withdrawOrder, and the routes after them.
 func (r *Reconciler) withdraw(cause error) error {
 	r.report(nil)
 	r.reportExit(nil)
@@ -2302,7 +2298,7 @@ func (r *Reconciler) withdraw(cause error) error {
 	}
 	for _, family := range []Family{FamilyIPv4, FamilyIPv6} {
 		if kept[family] {
-			errs = append(errs, fmt.Errorf("left the %s routes and rules in place, so the overlay stays held as the last pass left it", family))
+			errs = append(errs, fmt.Errorf("left the %s routes and every %s rule not deleted in place", family, family))
 		}
 	}
 	routes, err := r.plat.Routes()
@@ -2314,18 +2310,16 @@ func (r *Reconciler) withdraw(cause error) error {
 	withdrawn := 0
 	var stayed []Route
 	for _, route := range routes {
-		if kept[familyOf(route.Destination.Addr())] {
-			r.capturing = r.capturing || r.captures(route)
-			stayed = append(stayed, route)
-			continue
-		}
-		if err := r.plat.DelRoute(route); err != nil {
+		if !kept[familyOf(route.Destination.Addr())] {
+			err := r.plat.DelRoute(route)
+			if err == nil {
+				withdrawn++
+				continue
+			}
 			errs = append(errs, fmt.Errorf("delete route %s: %w", route, err))
-			r.capturing = r.capturing || r.captures(route)
-			stayed = append(stayed, route)
-		} else {
-			withdrawn++
 		}
+		r.capturing = r.capturing || r.captures(route)
+		stayed = append(stayed, route)
 	}
 	// where the listing failed, what the last pass left stands as told. The
 	// routes whose delete failed stay, and the listing read every add.

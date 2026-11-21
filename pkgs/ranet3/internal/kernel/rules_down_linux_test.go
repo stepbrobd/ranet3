@@ -97,8 +97,8 @@ func TestNetlinkStopLeavesTheDownSetUnderItsProtocol(t *testing.T) {
 			ours = append(ours, rule)
 		}
 	}
-	want := DownSet(downOverlay, DefaultProtocol)
-	if len(ours) != len(want) || slices.ContainsFunc(want, func(rule DumpedRule) bool { return !slices.Contains(ours, rule) }) {
+	want := dumpedDown(downOverlay, DefaultProtocol)
+	if !sameRules(ours, want) {
 		t.Errorf("the stop left the rules %+v under protocol %d, want the down set %+v", ours, DefaultProtocol, want)
 	}
 }

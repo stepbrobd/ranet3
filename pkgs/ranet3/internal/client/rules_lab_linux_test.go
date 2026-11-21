@@ -27,6 +27,7 @@ import (
 	"ranet3.com/pkgs/ranet3/internal/config"
 	"ranet3.com/pkgs/ranet3/internal/events"
 	"ranet3.com/pkgs/ranet3/internal/kernel"
+	"ranet3.com/pkgs/ranet3/internal/kernel/kerneltest"
 	"ranet3.com/pkgs/ranet3/internal/netnstest"
 	"ranet3.com/pkgs/ranet3/internal/netstack"
 	"ranet3.com/pkgs/ranet3/internal/packet"
@@ -997,7 +998,7 @@ func notDownSet(overlay []schema.Prefix) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	extra, missing := kernel.NotDownSet(dumped, overlay, kernel.DefaultProtocol)
+	extra, missing := kerneltest.NotDownSet(dumped, overlay)
 	var out []string
 	for _, rule := range extra {
 		out = append(out, fmt.Sprintf("the rule %+v outside the down set", rule))

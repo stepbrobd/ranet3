@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -303,7 +304,7 @@ func TestFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 	held := func() leftover {
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
-		down := len(fake.rules) == len(downRules(exitPassOverlay)) && !slices.ContainsFunc(downRules(exitPassOverlay), func(rule Rule) bool { return !fake.rules[rule] })
+		down := sameRules(slices.Collect(maps.Keys(fake.rules)), downRules(exitPassOverlay))
 		return leftover{fake.fallback != nil, down, len(fake.routes), len(fake.addrs), len(fake.rules), fake.fallbackWrites}
 	}
 

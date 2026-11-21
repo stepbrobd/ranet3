@@ -150,18 +150,19 @@ func isDownRule(rule Rule) bool {
 }
 
 // withdrawOrder is the order a withdrawal deletes rules in: from the last
-// priority to the first, each nop just after the goto that lands on it, so a
-// marked lookup skips what it skips until its goto goes, and every rule that
-// looks main up goes ahead of 5110.
+// priority to the first, each nop just after the goto that lands on it. A
+// marked lookup then jumps over the rules between a goto and its nop for as
+// long as the goto stands, and every rule that looks main up goes ahead of
+// 5110, so from the moment the down set is in a lookup to an overlay prefix
+// meets 5110 and the mesh's table as while running, or the down set.
 func withdrawOrder(rules []Rule) []Rule {
-	// at is the priority a rule goes at, a nop's that of its goto, and after it
+	// at is the priority a rule goes at, each nop's that of its goto, and after it
 	at := func(rule Rule) (uint32, int) {
-		if rule.action == actionNop {
-			for _, from := range rules {
-				if from.action == actionGoto && from.target == rule.Priority && from.Family == rule.Family {
-					return from.Priority, 1
-				}
-			}
+		switch rule.Priority {
+		case priorityOverlayEnd:
+			return priorityUnderlayPastOverlay, 1
+		case priorityMeshEnd:
+			return priorityUnderlayPastMesh, 1
 		}
 		return rule.Priority, 0
 	}
@@ -169,10 +170,7 @@ func withdrawOrder(rules []Rule) []Rule {
 	slices.SortStableFunc(out, func(a, b Rule) int {
 		ap, an := at(a)
 		bp, bn := at(b)
-		if ap != bp {
-			return cmp.Compare(bp, ap)
-		}
-		return cmp.Compare(an, bn)
+		return cmp.Or(cmp.Compare(bp, ap), cmp.Compare(an, bn))
 	})
 	return out
 }

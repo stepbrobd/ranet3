@@ -29,11 +29,12 @@ type kernelWrite struct {
 	route Route
 }
 
-// recordingKernel is the fake kernel noting each write it took, in the order taken
+// recordingKernel is the fake kernel noting each write it took, in the order taken, and failing the delete of each rule of failDel
 type recordingKernel struct {
 	*fakeKernel
-	noted  sync.Mutex
-	writes []kernelWrite
+	noted   sync.Mutex
+	writes  []kernelWrite
+	failDel map[Rule]error
 }
 
 func (k *recordingKernel) note(w kernelWrite) {
@@ -66,6 +67,12 @@ func (k *recordingKernel) AddRule(rule Rule) error {
 }
 
 func (k *recordingKernel) DelRule(rule Rule) error {
+	k.noted.Lock()
+	failed := k.failDel[rule]
+	k.noted.Unlock()
+	if failed != nil {
+		return failed
+	}
 	err := k.fakeKernel.DelRule(rule)
 	if err == nil {
 		k.note(kernelWrite{op: "delete rule", rule: rule})
@@ -77,11 +84,21 @@ func (k *recordingKernel) DelRule(rule Rule) error {
 func (k *recordingKernel) holds(rules []Rule) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	want := map[Rule]bool{}
-	for _, rule := range rules {
-		want[rule] = true
+	return sameRules(slices.Collect(maps.Keys(k.rules)), rules)
+}
+
+// sameRules reports whether have holds each rule of want and nothing else, as many as want holds
+func sameRules[R comparable](have, want []R) bool {
+	return len(have) == len(want) && !slices.ContainsFunc(want, func(rule R) bool { return !slices.Contains(have, rule) })
+}
+
+// dumpedDown is the down set of overlay as the kernel dumps it under protocol
+func dumpedDown(overlay []schema.Prefix, protocol uint8) []DumpedRule {
+	var out []DumpedRule
+	for _, rule := range downRules(overlay) {
+		out = append(out, rule.dumped(protocol))
 	}
-	return maps.Equal(k.rules, want)
+	return out
 }
 
 // holdsAny reports whether the fake holds any of rules
@@ -347,9 +364,9 @@ func TestStartWithNoReconcilerNamesEachRuleOfTheDownSetLeft(t *testing.T) {
 		Rule{Family: FamilyIPv4, Priority: priorityDownRefused, To: schema.PrefixFrom(prefix("192.0.2.0/25")), Table: 300}.dumped(DefaultProtocol),
 		Rule{Family: FamilyIPv4, Priority: priorityDownMain, To: schema.PrefixFrom(prefix("192.0.2.0/25")), Table: schema.TableMain, suppress: SuppressUpTo(0)}.dumped(DefaultProtocol),
 	}
-	others = append(others, DownSet(downOverlay, 99)...)
+	others = append(others, dumpedDown(downOverlay, 99)...)
 	said := logged(t)
-	warnOfDownSet(append(DownSet(downOverlay, DefaultProtocol), others...), downOverlay)
+	warnOfDownSet(append(dumpedDown(downOverlay, DefaultProtocol), others...), downOverlay)
 	text := said.String()
 	if n := strings.Count(text, downWarning); n != 1 {
 		t.Errorf("the start warned %d times, want once:\n%s", n, text)
@@ -494,7 +511,7 @@ func stopWhoseAddFails(t *testing.T, failing Rule, stop string) {
 		r.SetEnabled(false)
 		waitFor(t, func() bool { return leftAsKilled() && r.Stats().Err != "" })
 		stats := r.Stats()
-		if stats.Held != 1 || !strings.Contains(stats.Err, "left the "+string(failing.Family)+" routes and rules in place") || !strings.Contains(stats.Err, "netlink says no") {
+		if stats.Held != 1 || !strings.Contains(stats.Err, leftText(failing.Family)) || !strings.Contains(stats.Err, "netlink says no") {
 			t.Errorf("the down's record reads %d held and %q, want 1 held and the %s routes and rules left", stats.Held, stats.Err, failing.Family)
 		}
 		k.mu.Lock()
@@ -515,11 +532,53 @@ func stopWhoseAddFails(t *testing.T, failing Rule, stop string) {
 	case <-time.After(waitBudget):
 		t.Fatal("run did not return after its cancel")
 	}
-	if err == nil || !strings.Contains(err.Error(), "left the "+string(failing.Family)+" routes and rules in place") {
+	if err == nil || !strings.Contains(err.Error(), leftText(failing.Family)) {
 		t.Errorf("the stop returned %v, want the %s routes and rules left", err, failing.Family)
 	}
 	if !leftAsKilled() {
 		t.Errorf("the stop left %v and %v, want the %s routes and rules as the last pass left them and the other family's down set", k.rules, k.snapshot(), failing.Family)
+	}
+}
+
+// leftText is the error's words for a family a withdrawal leaves
+func leftText(family Family) string {
+	return fmt.Sprintf("left the %s routes and every %s rule not deleted in place", family, family)
+}
+
+// A stop whose delete of a rule fails keeps that family's routes and its rules from that one on in withdrawOrder, and says so, at
+// a down, which keeps the down set too, and at disable reconciler, which adds none, while the other family goes but for a down's
+// down set
+func TestStopWhoseRuleDeleteFailsKeepsTheRestOfThatFamily(t *testing.T) {
+	for _, disable := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ranet3 down", true: "disable reconciler"}[disable], func(t *testing.T) {
+			r, k := downHarness(t)
+			runDown(t, r, k)
+			held, err := k.Rules()
+			if err != nil {
+				t.Fatal(err)
+			}
+			order := withdrawOrder(held)
+			at := slices.IndexFunc(order, func(rule Rule) bool { return rule.Family == FamilyIPv4 && rule.Priority == priorityOverlay })
+			want := slices.DeleteFunc(slices.Clone(order[at:]), func(rule Rule) bool { return rule.Family != FamilyIPv4 })
+			routes := slices.DeleteFunc(k.snapshot(), func(route Route) bool { return !route.Destination.Addr().Is4() })
+			k.noted.Lock()
+			k.failDel = map[Rule]error{order[at]: errors.New("netlink says no")}
+			k.noted.Unlock()
+			if disable {
+				r.DropHold()
+			} else {
+				want = append(want, downRules(downOverlay)...)
+			}
+			r.SetEnabled(false)
+			waitFor(t, func() bool { return k.holds(want) && slices.Equal(k.snapshot(), routes) && r.Stats().Err != "" })
+			if got := r.Stats().Err; !strings.Contains(got, leftText(FamilyIPv4)) || strings.Contains(got, "held") {
+				t.Errorf("the stop records %q, want it to say the ipv4 routes and the ipv4 rules not deleted stand", got)
+			}
+			// the run's last withdrawal, at its cancel, deletes the rest
+			k.noted.Lock()
+			k.failDel = nil
+			k.noted.Unlock()
+		})
 	}
 }
 
@@ -529,7 +588,7 @@ func TestReloadWhileDownRewritesTheDownSet(t *testing.T) {
 	r, k := downHarness(t)
 	runDown(t, r, k)
 	r.SetEnabled(false)
-	waitFor(t, func() bool { return k.holds(downRules(downOverlay)) })
+	waitFor(t, func() bool { return k.holds(downRules(downOverlay)) && len(k.snapshot()) == 0 && r.Stats().Held == 2 })
 	moved := prefixes(prefix("192.0.2.0/24"), prefix("3fff::/20"))
 	from := len(k.taken())
 	if err := r.SetTable(r.Table(), moved, nil); err != nil {
