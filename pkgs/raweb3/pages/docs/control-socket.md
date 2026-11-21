@@ -114,7 +114,7 @@ TUN         ranet0 MTU 1400 queues 16
 Role        initiator, responder, full mesh, no transit
 Forwarding  IPv4 on IPv6 on
 Registry    /etc/ranet3/trust.json, 6 nodes in 2 organizations
-Kernel      table 200 protocol 155, 14 installed, 0 refused while down, last pass 12 seconds ago
+Kernel      table 200 protocol 155, 14 installed, last pass 12 seconds ago
 Egress      off, this node carries no traffic for others
 Antispoof   nftables table inet ranet3 chains antispoof and entry, inside ranet0 lo, 3 overlay prefixes, dropped 2 overlay sources and 0 carved sources, dropped 0 entering the mesh, dropped 0 mapped sources
 Dialers     5 running

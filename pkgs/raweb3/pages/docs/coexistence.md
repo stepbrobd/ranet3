@@ -57,8 +57,8 @@ lookup ends while no rule of another program is in the policy database. While a
 node is down, and after a stop, the reconciler holds 2 rules for each prefix of
 `overlay` at 32764 and 32765, just ahead of main at 32766, as
 [the overlay while a node is down](routing.md#the-overlay-while-a-node-is-down)
-gives. Another program's rule ahead of 32764 answers first, and of two rules at
-one priority the older answers first.
+gives. Another program's rule ahead of 32764 answers first, as
+[another program's rules](#another-programs-rules) gives.
 
 ### The underlay's mark
 

@@ -5,7 +5,7 @@
 title: "What it deliberately doesn't do"
 description: "What ranet3 deliberately does not do, and why."
 created: 2026-08-17
-updated: 2026-11-20
+updated: 2026-11-21
 order: 10
 ---
 
@@ -714,12 +714,10 @@ exit serving Macs advertises the `/0` only, as
 **While a Linux node is down, its overlay refuses an operator's route shorter
 than an overlay prefix.** The down set of
 [the overlay while a node is down](../routing.md#the-overlay-while-a-node-is-down)
-lets main answer only with a route as long as the prefix or longer, since the
-kernel cannot tell a shorter route an operator wrote from the uplink's own
-network where it covers the prefix, which would otherwise take a leaf's address.
-A rule ahead of main at 32766 still answers first. A reboot clears the down set,
-so from the boot until the next start an overlay destination leaves by the
-host's routes, main's default among them.
+lets main answer only with a route as long as the prefix or longer. A rule ahead
+of main at 32766 still answers first. A reboot clears the down set, so from the
+boot until the next start an overlay destination leaves by the host's routes,
+main's default among them.
 
 ## The kill switch on macOS
 

@@ -1105,31 +1105,39 @@ length:
 
 32765 goes in first, so no lookup meets 32764 alone. Both sit just ahead of the
 kernel's rule for main at 32766. Another program's rule ahead of 32764 answers
-first, and of two rules at one priority the older answers first. Past those
-rules, a lookup to an overlay destination ends at a route of main as long as the
-overlay prefix or longer, and otherwise at 32765. Main's default, a shorter
-route of main covering the prefix and the uplink's own network where it covers
-the prefix are refused like the rest. A destination outside `overlay` meets
-neither rule, and nothing is written into main. An IPv4 socket bound to a
+first, as [sharing a host](coexistence.md#another-programs-rules) gives. Past
+those rules, a lookup to an overlay destination ends at a route of main as long
+as the overlay prefix or longer, and otherwise at 32765. Main's default, a
+shorter route of main covering the prefix and the uplink's own network where it
+covers the prefix are refused like the rest. A destination outside `overlay`
+meets neither rule, and nothing is written into main. An IPv4 socket bound to a
 device, by `SO_BINDTODEVICE` or `ping -I`, whose lookup 32765 refuses sends
 on-link out of that device all the same, as it does while the node runs. An IPv6
 socket bound to a device meets the refusal.
 
 Once the down set is in, the stop deletes the reconciler's other rules from the
-last priority to the first, each goto just ahead of the rule it jumps to, and
-then its routes and addresses. Every rule that looks main up goes before 5110,
-so until 5110 goes a lookup to an overlay destination meets the mesh's table as
-it does while the node runs, and after it the down set. A destination outside
-`overlay` meets the rules not yet deleted and then main at 32766, where it ends
-after the stop too: a LAN destination, once 5410 is gone and 5110 still stands,
-meets main at 32766. Where the add of a rule of the down set fails, the stop
-leaves that family's routes and rules as a kill leaves them, its error says so,
-and `ranet3 down` adds the rule again on its retry.
+last priority to the first, and then its routes and addresses. Every rule that
+looks main up goes before 5110, so until 5110 goes a lookup to an overlay
+destination meets the mesh's table as it does while the node runs, and after it
+the down set. A destination outside `overlay` meets the rules not yet deleted
+and then main at 32766.
 
-A cached IPv6 route exception of length 128, which a `Packet Too Big` leaves on
-a route of main shorter than the prefix, passes 32764 until it expires, 10
-minutes after it was made, and `ip -6 route flush cache` clears it. IPv4 keeps
-no such exception, so 32765 refuses it.
+Where the add of a rule of the down set fails, or the reconciler's rules cannot
+be listed or one cannot be deleted, the stop leaves that family's routes and
+each of its rules not yet deleted, and its error says so.
+`ranet3 disable reconciler` leaves the same where a listing or a delete fails.
+`ranet3 down` and `disable reconciler` try again on their retry, and a stop of
+the daemon leaves them as they are.
+
+After a stop, an IPv6 route exception for an overlay address passes 32764, so
+the host's packets to that one address leave by main's route to it. A
+`Packet Too Big` makes one while main answers the address, its default route
+among them, whether or not the node sent the packet it quotes. It lasts until
+`net.ipv6.route.mtu_expires` runs out, 10 minutes by default. A router's
+redirect makes one too, which goes after a minute unused.
+`ip -6 route flush cache root <prefix>` clears the exceptions inside an overlay
+prefix alone. IPv4 keeps such exceptions too, and 32765 refuses them all the
+same.
 
 The next start keeps the down set until a pass has added every rule it derives,
 5110 among them, and holds a route of the mesh's table at each overlay prefix,
@@ -1150,17 +1158,14 @@ A start with no `cap.table` deletes nothing. It warns once, as
 [watching it](#watching-it) gives, of each rule of the down set of its `overlay`
 under protocol 155. A rule left under another protocol, after a change of
 `cap.table.proto`, or at a prefix the file no longer holds goes unnamed. Such a
-rule stays after an uninstall too.
-`ip -4 rule del priority 32765 to <prefix>
-protocol <proto>`, and the same for
-32764 and with `-6`, deletes each.
+rule stays after an uninstall too. Each is deleted by
+`ip -4 rule del priority <priority> to <prefix> protocol <proto>`, or
+`ip -6 rule del priority <priority> to <prefix> protocol <proto>` for an IPv6
+prefix.
 
 The `Kernel` line of `ranet3 status` counts the overlay prefixes refused while
-down, which `--json` carries as `kernel.held`. While the node is down it reads
-the prefixes whose refusal the stop added. While it runs it reads 0 once the
-first pass took the down set, and before that the prefixes that pass found. An
-operator's deletion of the rules while the node is down shows at the next start.
-macOS and the BSDs have no rule database, hold nothing while down and read 0.
+down where there are any, and `--json` always carries the count as
+`kernel.held`.
 
 ### Routes that count as a default
 
