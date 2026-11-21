@@ -175,35 +175,6 @@ func withdrawOrder(rules []Rule) []Rule {
 	return out
 }
 
-// DownSet is the down set of overlay as the kernel dumps it under protocol,
-// the rules a stop of a reconciler of that protocol leaves
-func DownSet(overlay []schema.Prefix, protocol uint8) []DumpedRule {
-	var out []DumpedRule
-	for _, rule := range downRules(overlay) {
-		out = append(out, rule.dumped(protocol))
-	}
-	return out
-}
-
-// NotDownSet compares the rules of protocol in dumped with the down set of
-// overlay under it: extra is each rule of protocol outside that set, and
-// missing each rule of the set dumped lacks, both empty where a stop of a
-// reconciler of protocol left exactly its down set
-func NotDownSet(dumped []DumpedRule, overlay []schema.Prefix, protocol uint8) (extra, missing []DumpedRule) {
-	down := DownSet(overlay, protocol)
-	for _, rule := range dumped {
-		if rule.Protocol == protocol && !slices.Contains(down, rule) {
-			extra = append(extra, rule)
-		}
-	}
-	for _, rule := range down {
-		if !slices.Contains(dumped, rule) {
-			missing = append(missing, rule)
-		}
-	}
-	return extra, missing
-}
-
 // WarnHeldOverlay warns once, for a start that runs no reconciler to remove
 // them, of each rule of overlay's down set under the default protocol that a
 // stop left, with the command that deletes it, and removes nothing. Only linux
