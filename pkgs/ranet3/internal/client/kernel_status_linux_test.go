@@ -17,8 +17,12 @@ import (
 	"ranet3.com/pkgs/ranet3/schema"
 )
 
-// statusBudget bounds how long the test waits for the reconciler's own record to show a withdrawal
-const statusBudget = 10 * time.Second
+const (
+	// statusBudget bounds how long the test waits for the reconciler's own record to show a withdrawal
+	statusBudget = 10 * time.Second
+	// statusPoll is how often the test reads that record while it waits
+	statusPoll = 10 * time.Millisecond
+)
 
 // ReconcilerOf hands the node a reconciler whose status counts the overlay prefixes a down's stop refuses, as the reconciler's own
 // record does, and whose DropHold has the operator's stop that follows take them, the status counting 0 after it
@@ -47,7 +51,7 @@ func TestReconcilerOfCountsTheDownAndDropsItForTheOperatorsStop(t *testing.T) {
 	}()
 	t.Cleanup(func() { r.DropHold(); cancel(); <-done })
 	settled := func(held int) bool {
-		for deadline := time.Now().Add(statusBudget); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for deadline := time.Now().Add(statusBudget); time.Now().Before(deadline); time.Sleep(statusPoll) {
 			if stats := routes.Stats(); !stats.At.IsZero() && stats.Held == held {
 				return true
 			}
