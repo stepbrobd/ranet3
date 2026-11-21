@@ -146,8 +146,8 @@ func (c *Client) applySubsystem(name control.Subsystem, on bool) {
 	switch name {
 	case control.SubsystemReconciler:
 		r := c.reconcilerNow()
-		if drop := r.DropHold; !on && drop != nil {
-			drop()
+		if !on && r.DropHold != nil {
+			r.DropHold()
 		}
 		if set := r.Enable; set != nil {
 			set(on)

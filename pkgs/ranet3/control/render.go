@@ -133,12 +133,7 @@ func kernelLine(k KernelStatus) string {
 	if k.Skipped > 0 {
 		fmt.Fprintf(&line, ", %d skipped", k.Skipped)
 	}
-	switch {
-	case k.Held == 1:
-		line.WriteString(", 1 overlay prefix held by the down set")
-	case k.Held > 1:
-		fmt.Fprintf(&line, ", %d overlay prefixes held by the down set", k.Held)
-	}
+	fmt.Fprintf(&line, ", %d refused while down", k.Held)
 	if k.HoldPieces > 0 {
 		line.WriteString(", " + countOf(k.HoldPieces, "piece") + " of cut holds")
 	}

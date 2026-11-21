@@ -578,16 +578,13 @@ func TestKernelLineNamesTheCoveredFamilies(t *testing.T) {
 	}
 }
 
-// The kernel line counts the overlay prefixes the down set holds, one in the
-// singular, and says nothing of it where it holds none
-func TestKernelLineCountsTheOverlayPrefixesTheDownSetHolds(t *testing.T) {
-	for held, want := range map[int]string{1: ", 1 overlay prefix held by the down set", 2: ", 2 overlay prefixes held by the down set"} {
+// The kernel line always counts the overlay prefixes refused while the node is
+// down, 0 among them
+func TestKernelLineCountsTheOverlayPrefixesRefusedWhileDown(t *testing.T) {
+	for held, want := range map[int]string{0: ", 0 refused while down", 1: ", 1 refused while down", 2: ", 2 refused while down"} {
 		if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", Held: held}); !strings.Contains(line, want) {
-			t.Errorf("with %d prefixes held the kernel line reads %q, want it to hold %q", held, line, want)
+			t.Errorf("with %d prefixes refused the kernel line reads %q, want it to hold %q", held, line, want)
 		}
-	}
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "down set") {
-		t.Errorf("the kernel line reads %q with nothing held, want no clause of the down set", line)
 	}
 }
 
