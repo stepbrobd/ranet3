@@ -27,6 +27,7 @@ import (
 	"ranet3.com/pkgs/ranet3/internal/config"
 	"ranet3.com/pkgs/ranet3/internal/events"
 	"ranet3.com/pkgs/ranet3/internal/kernel"
+	"ranet3.com/pkgs/ranet3/internal/kernel/kerneltest"
 	"ranet3.com/pkgs/ranet3/internal/netnstest"
 	"ranet3.com/pkgs/ranet3/internal/netstack"
 	"ranet3.com/pkgs/ranet3/schema"
@@ -314,7 +315,7 @@ func holdRules(t *testing.T, leaf *netnstest.Thread) (down, overlay int) {
 	if err := leaf.Do(func() (err error) { rules, err = kernel.DumpRules(); return err }); err != nil {
 		t.Fatalf("read the leaf's rules: %v", err)
 	}
-	set := kernel.DownSet([]schema.Prefix{schema.PrefixFrom(holdHost[4].overlay), schema.PrefixFrom(holdHost[6].overlay)}, kernel.DefaultProtocol)
+	set := kerneltest.DownSet([]schema.Prefix{schema.PrefixFrom(holdHost[4].overlay), schema.PrefixFrom(holdHost[6].overlay)})
 	for _, rule := range rules {
 		switch {
 		case slices.Contains(set, rule):
@@ -370,8 +371,8 @@ func holdOperator(t *testing.T, leaf *netnstest.Thread) []string {
 // overlay leaves by the uplink's default and every route and rule the form wrote stays. Between the stop and the pass of the restart
 // that puts 5110 back, the leaf's lookup with no source and from the uplink's address ends in the tun, a refusal, or where the form
 // sends it running live or stopped, which is a route of main as long as the prefix or a rule ahead of main. That window is sampled
-// without a pause, so it shows a gap of several writes and may miss one of a single write: the guard of the order of a stop's and
-// a start's writes is the fake kernel's test of it in internal/kernel.
+// without a pause and caught a reverted order in some runs alone, each time by a single read, so it guards no order: the fake
+// kernel's tests of a stop's and a start's writes in internal/kernel do.
 func TestNodeGoingDownHoldsTheOverlayAgainstEachOperatorRoute(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("creating a tun needs root on linux")
