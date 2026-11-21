@@ -4,6 +4,7 @@
 package kernel
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -110,8 +111,7 @@ func derivedRules(id schema.TableID, overlay []schema.Prefix, own []netip.Prefix
 	return out
 }
 
-// downRules is the down set, routing.md's "The overlay while a node is down":
-// for each overlay prefix of length n, in its family, 32765 refusing it and
+// downRules is the down set: for each overlay prefix of length n, in its family, 32765 refusing it and
 // 32764 looking main up to it for a route of length n or longer, the refusal
 // first, the order a stop adds them in, so no lookup to the prefix meets 32764
 // alone and leaves by a shorter route of main. familyPrefixes holds no /0, so
@@ -143,11 +143,74 @@ func (r *Reconciler) holdsOverlay(down []Rule) bool {
 	return !slices.ContainsFunc(down, func(rule Rule) bool { return rule.Priority == priorityDownRefused && !at[rule.To.Prefix] })
 }
 
+// isDownRule reports whether rule is one of the down set of its own
+// destination, which a stop left for this overlay or an earlier one
+func isDownRule(rule Rule) bool {
+	return rule.To.Prefix.IsValid() && slices.Contains(downRules([]schema.Prefix{rule.To}), rule)
+}
+
+// withdrawOrder is the order a withdrawal deletes rules in: from the last
+// priority to the first, each nop just after the goto that lands on it, so a
+// marked lookup skips what it skips until its goto goes, and every rule that
+// looks main up goes ahead of 5110.
+func withdrawOrder(rules []Rule) []Rule {
+	// at is the priority a rule goes at, a nop's that of its goto, and after it
+	at := func(rule Rule) (uint32, int) {
+		if rule.action == actionNop {
+			for _, from := range rules {
+				if from.action == actionGoto && from.target == rule.Priority && from.Family == rule.Family {
+					return from.Priority, 1
+				}
+			}
+		}
+		return rule.Priority, 0
+	}
+	out := slices.Clone(rules)
+	slices.SortStableFunc(out, func(a, b Rule) int {
+		ap, an := at(a)
+		bp, bn := at(b)
+		if ap != bp {
+			return cmp.Compare(bp, ap)
+		}
+		return cmp.Compare(an, bn)
+	})
+	return out
+}
+
+// DownSet is the down set of overlay as the kernel dumps it under protocol,
+// the rules a stop of a reconciler of that protocol leaves
+func DownSet(overlay []schema.Prefix, protocol uint8) []DumpedRule {
+	var out []DumpedRule
+	for _, rule := range downRules(overlay) {
+		out = append(out, rule.dumped(protocol))
+	}
+	return out
+}
+
+// NotDownSet compares the rules of protocol in dumped with the down set of
+// overlay under it: extra is each rule of protocol outside that set, and
+// missing each rule of the set dumped lacks, both empty where a stop of a
+// reconciler of protocol left exactly its down set
+func NotDownSet(dumped []DumpedRule, overlay []schema.Prefix, protocol uint8) (extra, missing []DumpedRule) {
+	down := DownSet(overlay, protocol)
+	for _, rule := range dumped {
+		if rule.Protocol == protocol && !slices.Contains(down, rule) {
+			extra = append(extra, rule)
+		}
+	}
+	for _, rule := range down {
+		if !slices.Contains(dumped, rule) {
+			missing = append(missing, rule)
+		}
+	}
+	return extra, missing
+}
+
 // WarnHeldOverlay warns once, for a start that runs no reconciler to remove
-// them, of each rule a stop left holding an overlay prefix, in the down set's
-// shape under any protocol, with the command that deletes it, and removes
-// nothing. Only linux holds policy rules.
-func WarnHeldOverlay() {
+// them, of each rule of overlay's down set under the default protocol that a
+// stop left, with the command that deletes it, and removes nothing. Only linux
+// holds policy rules.
+func WarnHeldOverlay(overlay []schema.Prefix) {
 	dumped, err := DumpRules()
 	if errors.Is(err, ErrUnsupported) {
 		return
@@ -156,31 +219,27 @@ func WarnHeldOverlay() {
 		slog.Warn("kernel could not list the policy rules to find a down set an earlier instance may have left", "err", err)
 		return
 	}
-	warnHeldOverlay(dumped)
+	warnOfDownSet(dumped, overlay)
 }
 
-// warnHeldOverlay is WarnHeldOverlay's warning about the rules dumped holds
-func warnHeldOverlay(dumped []DumpedRule) {
+// warnOfDownSet is WarnHeldOverlay's warning, of the rules of overlay's down
+// set that dumped holds
+func warnOfDownSet(dumped []DumpedRule, overlay []schema.Prefix) {
 	var rules, fix []string
-	for _, held := range dumped {
-		if !held.To.IsValid() {
+	for _, rule := range downRules(overlay) {
+		if !slices.Contains(dumped, rule.dumped(DefaultProtocol)) {
 			continue
 		}
-		for _, rule := range downRules([]schema.Prefix{schema.PrefixFrom(held.To)}) {
-			if rule.dumped(held.Protocol) != held {
-				continue
-			}
-			version := "4"
-			if rule.Family == FamilyIPv6 {
-				version = "6"
-			}
-			rules = append(rules, fmt.Sprintf("%s protocol %d", rule, held.Protocol))
-			fix = append(fix, fmt.Sprintf("ip -%s rule del priority %d to %s protocol %d", version, rule.Priority, rule.To, held.Protocol))
+		version := "4"
+		if rule.Family == FamilyIPv6 {
+			version = "6"
 		}
+		rules = append(rules, fmt.Sprintf("%s protocol %d", rule, DefaultProtocol))
+		fix = append(fix, fmt.Sprintf("ip -%s rule del priority %d to %s protocol %d", version, rule.Priority, rule.To, DefaultProtocol))
 	}
 	if len(rules) > 0 {
 		slog.Warn("kernel found rules an earlier instance left to hold overlay prefixes, which refuse those prefixes until they are deleted",
-			"rules", strings.Join(rules, ", "), "fix", strings.Join(fix, "; "))
+			"rules", strings.Join(rules, ", "), "fix", strings.Join(fix, " && "))
 	}
 }
 

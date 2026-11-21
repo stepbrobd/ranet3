@@ -497,10 +497,10 @@ func TestTUNDerivedRulesSendEachSocketWhereModeOffSays(t *testing.T) {
 
 	t.Run("a clean stop", func(t *testing.T) {
 		stop()
-		var rules []kernelRule
+		var wrong []string
 		var left []kernelRoute
 		if err := leaf.Do(func() (err error) {
-			if rules, err = dumpRules(); err != nil {
+			if wrong, err = notDownSet(cfg.Overlay); err != nil {
 				return err
 			}
 			left, err = dumpRoutes()
@@ -509,10 +509,8 @@ func TestTUNDerivedRulesSendEachSocketWhereModeOffSays(t *testing.T) {
 			t.Fatalf("read the leaf back: %v", err)
 		}
 		proto := uint8(kernel.DefaultProtocol)
-		for _, rule := range rules {
-			if rule.protocol == proto && !heldByDownSet(rule) {
-				t.Errorf("the stop left the rule %s", rule)
-			}
+		for _, rule := range wrong {
+			t.Errorf("the stop left %s", rule)
 		}
 		for _, route := range left {
 			if route.protocol == proto {
@@ -992,8 +990,20 @@ func rulesKeyOf(raw []byte) (rulesKey, netip.Addr, bool) {
 	return rulesKey{}, netip.Addr{}, false
 }
 
-// heldByDownSet reports whether rule is one of the down set a stop leaves, the reconciler's at 32764 or 32765, which the routing
-// page's "The overlay while a node is down" tells
-func heldByDownSet(rule kernelRule) bool {
-	return rule.protocol == kernel.DefaultProtocol && (rule.priority == 32764 || rule.priority == 32765)
+// notDownSet reads the namespace's rules on the calling thread and describes each rule of the reconciler's protocol outside the down
+// set of overlay a stop leaves, and each rule of that set missing
+func notDownSet(overlay []schema.Prefix) ([]string, error) {
+	dumped, err := kernel.DumpRules()
+	if err != nil {
+		return nil, err
+	}
+	extra, missing := kernel.NotDownSet(dumped, overlay, kernel.DefaultProtocol)
+	var out []string
+	for _, rule := range extra {
+		out = append(out, fmt.Sprintf("the rule %+v outside the down set", rule))
+	}
+	for _, rule := range missing {
+		out = append(out, fmt.Sprintf("no rule %+v of the down set", rule))
+	}
+	return out, nil
 }

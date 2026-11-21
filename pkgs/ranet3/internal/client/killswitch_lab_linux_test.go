@@ -1030,7 +1030,7 @@ func (lab *switchLab) cleanStop(t *testing.T) {
 			lab.border = nil
 		}
 		var tables map[uint8]uint32
-		var rules []kernelRule
+		var wrong []string
 		if err := lab.leaf.Do(func() error {
 			conn, err := nftables.Dial()
 			if err != nil {
@@ -1040,7 +1040,7 @@ func (lab *switchLab) cleanStop(t *testing.T) {
 			if tables, err = nftables.Tables(conn, nftables.Table); err != nil {
 				return err
 			}
-			rules, err = dumpRules()
+			wrong, err = notDownSet(lab.d.node.config().Overlay)
 			return err
 		}); err != nil {
 			t.Fatalf("read the leaf back: %v", err)
@@ -1048,10 +1048,8 @@ func (lab *switchLab) cleanStop(t *testing.T) {
 		if len(tables) > 0 {
 			t.Errorf("the stop left the table %s in the families %v", nftables.Table, tables)
 		}
-		for _, rule := range rules {
-			if rule.protocol == kernel.DefaultProtocol && !heldByDownSet(rule) {
-				t.Errorf("the stop left the rule %s", rule)
-			}
+		for _, rule := range wrong {
+			t.Errorf("the stop left %s", rule)
 		}
 	})
 }

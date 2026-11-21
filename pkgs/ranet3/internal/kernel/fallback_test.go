@@ -297,20 +297,21 @@ func TestFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 		return runThroughFirstPass(t, newReconciler(tbl, rt, tbl.Assigned(nil), netstack.NewRouteTable(), fake))
 	}
 	type leftover struct {
-		table                            bool
+		table, down                      bool
 		routes, addresses, rules, writes int
 	}
 	held := func() leftover {
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
-		return leftover{fake.fallback != nil, len(fake.routes), len(fake.addrs), len(fake.rules), fake.fallbackWrites}
+		down := len(fake.rules) == len(downRules(exitPassOverlay)) && !slices.ContainsFunc(downRules(exitPassOverlay), func(rule Rule) bool { return !fake.rules[rule] })
+		return leftover{fake.fallback != nil, down, len(fake.routes), len(fake.addrs), len(fake.rules), fake.fallbackWrites}
 	}
 
 	stop := start()
-	written, down := held().rules, len(downRules(exitPassOverlay))
+	written := held().rules
 	stop(ErrMeshFailed)
-	if left := held(); !left.table || left.routes+left.addresses > 0 || left.rules != down {
-		t.Fatalf("the failed mesh's stop left %+v, want the table and the %d rules of the down set alone", left, down)
+	if left := held(); !left.table || left.routes+left.addresses > 0 || !left.down {
+		t.Fatalf("the failed mesh's stop left %+v, want the table and the rules of the down set alone", left)
 	}
 	if n := strings.Count(said.String(), leftLine); n != 1 || !strings.Contains(said.String(), leftLine+fakeWhere+" state=holding") {
 		t.Errorf("the failed mesh's stop warned %d times, want once with the state holding:\n%s", n, said)
@@ -320,8 +321,8 @@ func TestFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 		t.Errorf("the next start holds %+v, want the table kept from the one write before and %d rules", left, written)
 	}
 	stop(nil)
-	if left := held(); left.table || left.routes+left.addresses > 0 || left.rules != down {
-		t.Errorf("a plain stop left %+v, want the %d rules of the down set alone", left, down)
+	if left := held(); left.table || left.routes+left.addresses > 0 || !left.down {
+		t.Errorf("a plain stop left %+v, want the rules of the down set alone", left)
 	}
 	if n := strings.Count(said.String(), leftLine); n != 1 {
 		t.Errorf("after a plain stop the warning was written %d times, want the failed stop's alone", n)

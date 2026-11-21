@@ -1324,7 +1324,7 @@ func TestNetlinkFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 	}
 	type leftover struct {
 		read                     fallbackRead
-		listed                   bool
+		listed, down             bool
 		rules, routes, addresses int
 	}
 	reader, err := nftables.Dial()
@@ -1343,7 +1343,8 @@ func TestNetlinkFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 		if err := errors.Join(err, listErr, ruleErr, routeErr, addressErr); err != nil {
 			t.Fatalf("read the namespace back: %v", err)
 		}
-		out = leftover{read: read, listed: listed, rules: len(rules), routes: len(routes)}
+		down := len(rules) == len(downRules(exitPassOverlay)) && !slices.ContainsFunc(downRules(exitPassOverlay), func(rule Rule) bool { return !slices.Contains(rules, rule) })
+		out = leftover{read: read, listed: listed, down: down, rules: len(rules), routes: len(routes)}
 		for _, address := range addresses {
 			if slices.Contains(first.addresses, address) {
 				out.addresses++
@@ -1353,10 +1354,10 @@ func TestNetlinkFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 	}
 
 	stop := runThroughFirstPass(t, first)
-	written, down := held().rules, len(downRules(exitPassOverlay))
+	written := held().rules
 	stop(ErrMeshFailed)
-	if left := held(); left.read.fault != "" || !left.listed || left.routes+left.addresses > 0 || left.rules != down {
-		t.Fatalf("the failed mesh's stop left %+v, want the table as written and the %d rules of the down set alone", left, down)
+	if left := held(); left.read.fault != "" || !left.listed || left.routes+left.addresses > 0 || !left.down {
+		t.Fatalf("the failed mesh's stop left %+v, want the table as written and the rules of the down set alone", left)
 	}
 	if err := sendFrom(t, netip.MustParseAddr("203.0.113.9"), 9, ""); !errors.Is(err, unix.EPERM) {
 		t.Errorf("with the table and the down set a datagram beyond the LAN left with %v, want EPERM", err)
@@ -1369,8 +1370,8 @@ func TestNetlinkFallbackTableOutlivesTheStopOfAFailedMesh(t *testing.T) {
 		t.Errorf("the next start holds %+v, want the table as written with the one drop and %d rules", left, written)
 	}
 	stop(nil)
-	if left := held(); left.read.fault != "its chains are missing" || left.listed || left.routes+left.addresses > 0 || left.rules != down {
-		t.Errorf("a plain stop left %+v, want the %d rules of the down set alone", left, down)
+	if left := held(); left.read.fault != "its chains are missing" || left.listed || left.routes+left.addresses > 0 || !left.down {
+		t.Errorf("a plain stop left %+v, want the rules of the down set alone", left)
 	}
 	if tables, err := nftables.Tables(reader, nftables.Table); err != nil || len(tables) != 0 {
 		t.Errorf("after the plain stop of the start that took the switch over, the table %s is in the families %v (%v), want none", nftables.Table, tables, err)

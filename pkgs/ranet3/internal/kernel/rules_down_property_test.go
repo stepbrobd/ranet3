@@ -60,7 +60,7 @@ func TestDownSetIsTwoRulesForEachOverlayPrefix(t *testing.T) {
 	pbt.Check(t, func(ht *hegel.T) {
 		var overlay []schema.Prefix
 		for range hegel.Draw(ht, pbt.Spanning(0, 6)) {
-			// an entry written twice, or under other host bits, is one prefix
+			// an entry written twice is one prefix
 			if len(overlay) > 0 && hegel.Draw(ht, pbt.Spanning(0, 3)) == 3 {
 				overlay = append(overlay, overlay[hegel.Draw(ht, hegel.Integers(0, len(overlay)-1))])
 				continue
