@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -255,18 +256,19 @@ func (d *holdDaemon) live(on bool) {
 // holdWhere is where ns sends the host's own packet to destination
 func holdWhere(t *testing.T, ns *netnstest.Thread, destination netip.Addr) string {
 	t.Helper()
-	where, err := holdLookup(ns, destination)
+	where, err := holdLookup(ns, netip.Addr{}, destination)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return where
 }
 
-// holdLookup is holdWhere for a goroutine of a test's own, failing with the error of the thread it asks on
-func holdLookup(ns *netnstest.Thread, destination netip.Addr) (string, error) {
+// holdLookup is holdWhere for a packet from source, none where it is the zero address, for a goroutine of a test's own, failing
+// with the error of the thread it asks on
+func holdLookup(ns *netnstest.Thread, source, destination netip.Addr) (string, error) {
 	var route kernel.MatchedRoute
 	var err error
-	if doErr := ns.Do(func() error { route, err = kernel.RouteGet(netip.Addr{}, destination, ""); return nil }); doErr != nil {
+	if doErr := ns.Do(func() error { route, err = kernel.RouteGet(source, destination, ""); return nil }); doErr != nil {
 		return "", doErr
 	}
 	return holdAnswer(route, err), nil
@@ -304,18 +306,22 @@ func holdAnswer(route kernel.MatchedRoute, err error) string {
 	return fmt.Sprintf("%+v", route)
 }
 
-// holdRules counts the reconciler's rules the leaf holds of the down set's priorities and at 5110
+// holdRules counts the rules of the down set of the leaf's overlay the leaf holds and the reconciler's rules at 5110, and fails t
+// for a rule of the reconciler's at the down set's priorities outside that set
 func holdRules(t *testing.T, leaf *netnstest.Thread) (down, overlay int) {
 	t.Helper()
-	var rules []kernelRule
-	if err := leaf.Do(func() (err error) { rules, err = dumpRules(); return err }); err != nil {
+	var rules []kernel.DumpedRule
+	if err := leaf.Do(func() (err error) { rules, err = kernel.DumpRules(); return err }); err != nil {
 		t.Fatalf("read the leaf's rules: %v", err)
 	}
+	set := kernel.DownSet([]schema.Prefix{schema.PrefixFrom(holdHost[4].overlay), schema.PrefixFrom(holdHost[6].overlay)}, kernel.DefaultProtocol)
 	for _, rule := range rules {
 		switch {
-		case heldByDownSet(rule):
+		case slices.Contains(set, rule):
 			down++
-		case rule.protocol == kernel.DefaultProtocol && rule.priority == 5110:
+		case rule.Protocol == kernel.DefaultProtocol && (rule.Priority == 32764 || rule.Priority == 32765):
+			t.Errorf("the leaf holds the rule %+v at a priority of the down set outside it", rule)
+		case rule.Protocol == kernel.DefaultProtocol && rule.Priority == 5110:
 			overlay++
 		}
 	}
@@ -361,8 +367,11 @@ func holdOperator(t *testing.T, leaf *netnstest.Thread) []string {
 // and stopped, each overlay prefix's two rules ahead of main let an operator's route of main as long as the prefix or longer, and
 // every rule ahead of main, answer, and refuse the rest, a shorter route of main and its default among them, and disable reconciler
 // takes them. Running, restarted and killed, the node holds what it held before them. In every state the destination outside the
-// overlay leaves by the uplink's default and every route and rule the form wrote stays, and between the stop and the pass of the
-// restart that puts 5110 back the leaf never leaves by the uplink's default.
+// overlay leaves by the uplink's default and every route and rule the form wrote stays. Between the stop and the pass of the restart
+// that puts 5110 back, the leaf's lookup with no source and from the uplink's address ends in the tun, a refusal, or where the form
+// sends it running live or stopped, which is a route of main as long as the prefix or a rule ahead of main. That window is sampled
+// without a pause, so it shows a gap of several writes and may miss one of a single write: the guard of the order of a stop's and
+// a start's writes is the fake kernel's test of it in internal/kernel.
 func TestNodeGoingDownHoldsTheOverlayAgainstEachOperatorRoute(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("creating a tun needs root on linux")
@@ -427,8 +436,8 @@ func TestNodeGoingDownHoldsTheOverlayAgainstEachOperatorRoute(t *testing.T) {
 			})
 			var line strings.Builder
 			control.RenderStatus(&line, d.node.Status())
-			if !strings.Contains(line.String(), "2 overlay prefixes held by the down set") {
-				t.Errorf("down: the status does not say the down set holds the overlay:\n%s", line.String())
+			if !strings.Contains(line.String(), "2 refused while down") {
+				t.Errorf("down: the status does not count the 2 overlay prefixes refused:\n%s", line.String())
 			}
 			read(3, 4)
 			if _, err := d.node.SetSubsystem(context.Background(), control.SubsystemReconciler, false); err != nil {
@@ -443,25 +452,32 @@ func TestNodeGoingDownHoldsTheOverlayAgainstEachOperatorRoute(t *testing.T) {
 				down, overlay := holdRules(t, leaf)
 				return down == 0 && overlay == 2 && holdLive(t, leaf, form)
 			})
-			// the leaf's lookup from the stop until the restart's pass put 5110 back, read without a pause on a thread of its own
+			// the leaf's lookup from the stop until the restart's pass put 5110 back, read without a pause on a thread of its own, with
+			// each answer outside what the window allows counted as a leak
+			allowed := []string{holdTun, holdRefused, holdRefusedRule, form.want[1], form.want[5]}
 			sampler := netnstest.JoinThread(t, leaf.Path)
 			var sampling atomic.Bool
-			var uplinked, samples atomic.Int64
+			var samples atomic.Int64
+			var leaks sync.Map
 			var sampleErr atomic.Value
 			sampled := make(chan struct{})
 			sampling.Store(true)
+			window := time.Now()
 			go func() {
 				defer close(sampled)
 				for sampling.Load() {
 					for _, family := range []int{4, 6} {
-						where, err := holdLookup(sampler, holdHost[family].leaf.Addr())
-						if err != nil {
-							sampleErr.Store(err)
-							return
-						}
-						samples.Add(1)
-						if where == holdUplink {
-							uplinked.Add(1)
+						for _, source := range []netip.Addr{{}, rulesHost[family].uplink.Addr()} {
+							where, err := holdLookup(sampler, source, holdHost[family].leaf.Addr())
+							if err != nil {
+								sampleErr.Store(err)
+								return
+							}
+							samples.Add(1)
+							if !slices.Contains(allowed, where) {
+								n, _ := leaks.LoadOrStore(fmt.Sprintf("IPv%d from %v %s", family, source, where), new(atomic.Int64))
+								n.(*atomic.Int64).Add(1)
+							}
 						}
 					}
 				}
@@ -478,10 +494,12 @@ func TestNodeGoingDownHoldsTheOverlayAgainstEachOperatorRoute(t *testing.T) {
 			if err, _ := sampleErr.Load().(error); err != nil {
 				t.Fatalf("read the leaf between the stop and the restart: %v", err)
 			}
-			t.Logf("the leaf read %d times between the stop and the restart's pass", samples.Load())
-			if n := uplinked.Load(); n > 0 {
-				t.Errorf("between the stop and the restart's pass the leaf left by the uplink's default %d of %d times", n, samples.Load())
-			}
+			length := time.Since(window)
+			t.Logf("the leaf read %d times in the %s between the stop and the restart's pass, %.0f a second", samples.Load(), length, float64(samples.Load())/length.Seconds())
+			leaks.Range(func(where, n any) bool {
+				t.Errorf("between the stop and the restart's pass the leaf, %s, %d of %d times", where, n.(*atomic.Int64).Load(), samples.Load())
+				return true
+			})
 			read(6, 0)
 			d.stop()
 
