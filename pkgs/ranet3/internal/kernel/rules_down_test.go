@@ -589,19 +589,20 @@ func TestReloadWhileDownRewritesTheDownSet(t *testing.T) {
 	runDown(t, r, k)
 	r.SetEnabled(false)
 	waitFor(t, func() bool { return k.holds(downRules(downOverlay)) && len(k.snapshot()) == 0 && r.Stats().Held == 2 })
-	moved := prefixes(prefix("192.0.2.0/24"), prefix("3fff::/20"))
-	from := len(k.taken())
+	// 3 prefixes where the stop's overlay holds 2, so the count read is the reload's own
+	moved := prefixes(prefix("192.0.2.0/24"), prefix("198.51.100.0/24"), prefix("3fff::/20"))
+	from, stopped := len(k.taken()), r.Stats().At
 	if err := r.SetTable(r.Table(), moved, nil); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return k.holds(downRules(moved)) })
+	waitFor(t, func() bool { return k.holds(downRules(moved)) && !r.Stats().At.Equal(stopped) })
 	writes := k.taken()[from:]
 	lastAdd := slices.IndexFunc(writes, func(w kernelWrite) bool { return w.op != "add rule" })
 	if lastAdd != len(downRules(moved)) {
 		t.Errorf("the reload wrote %+v, want the new down set's adds ahead of every delete", writes)
 	}
-	if held := r.Stats().Held; held != 2 {
-		t.Errorf("after the reload the record counts %d overlay prefixes held, want 2", held)
+	if held := r.Stats().Held; held != 3 {
+		t.Errorf("after the reload the record counts %d overlay prefixes held, want the new overlay's 3", held)
 	}
 }
 
