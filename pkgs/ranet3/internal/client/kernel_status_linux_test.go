@@ -42,13 +42,16 @@ func TestReconcilerOfCountsTheDownAndDropsItForTheOperatorsStop(t *testing.T) {
 		defer close(done)
 		_ = runner.Do(func() error { return routes.Run(ctx) })
 	}()
-	t.Cleanup(func() { r.DropHold(); cancel(); <-done })
+	t.Cleanup(func() { routes.DropHold(); cancel(); <-done })
 	settled := func(held int) func() bool {
 		return func() bool { stats := routes.Stats(); return !stats.At.IsZero() && stats.Held == held }
 	}
 	waitFor(t, convergeBudget, "the reconciler's own record to count the 2 overlay prefixes of the down set", settled(2))
 	if got := r.Status().Held; got != 2 {
 		t.Errorf("the down's status counts %d overlay prefixes refused, want the reconciler's 2", got)
+	}
+	if r.DropHold == nil {
+		t.Fatal("ReconcilerOf left DropHold unset, so no operator's stop takes the down set")
 	}
 	r.DropHold()
 	r.Enable(false)
