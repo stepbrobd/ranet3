@@ -4,6 +4,7 @@
 package client
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,14 +12,31 @@ import (
 )
 
 func TestSourcedShippedExamplesRemainInactive(t *testing.T) {
-	for _, format := range []string{".toml", ".yaml", ".json"} {
-		t.Run(format, func(t *testing.T) {
-			cfg, err := config.Load(filepath.Join("..", "..", "examples", "config"+format))
+	dir := filepath.Join("..", "..", "examples")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		switch filepath.Ext(name) {
+		case ".toml", ".yaml", ".yml", ".json":
+		default:
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			cfg, err := config.Load(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if cfg.Cap.Table != nil {
 				t.Fatalf("shipped example starts the kernel reconciler: %+v", cfg.Cap.Table)
+			}
+			if len(cfg.Segments().Steer) != 0 {
+				t.Fatal("shipped example activates segment steering")
 			}
 			if err := refuseExitModeHere(cfg); err != nil {
 				t.Fatalf("shipped example refused on this platform: %v", err)
