@@ -4,7 +4,7 @@
 title: "Segment routing"
 description: "Segment routing and steering, done in this process rather than in the kernel."
 created: 2026-09-21
-updated: 2026-11-22
+updated: 2026-11-28
 order: 60
 ---
 
@@ -325,10 +325,10 @@ dropped, and one whose first segment has no route, or, along `cap.exit.via`, has
 no route of its own, is answered as one whose destination no entry holds, as
 [routing](routing.md#transit) gives, from its destination into the tun, within
 the ICMP rate limits. `status` and the scrape count the 2 reasons apart, and
-status's Kernel line alone carries `cap.exit.via`'s own steered and unrouted
-counts beside the totals, as [the command line](cli.md#reading-state) gives.
-Neither counts against the segments this node answers for, because neither is
-anything a peer did.
+`status --long` or JSON `kernel.exit_path` carries `cap.exit.via`'s own steered
+and unrouted counts beside the totals, as
+[the command line](cli.md#reading-state) gives. Neither counts against the
+segments this node answers for, because neither is anything a peer did.
 
 ## Waypoints and packet size
 
@@ -476,14 +476,15 @@ non-mapped outer source outside the overlay at any SID, or at an egress segment
 one of the reasons below. The Steering line lists the entries with the steered
 count, and the count for each reason a steered packet was lost once it is
 above 0. Those counts are the totals, `cap.exit.via`'s path among them, and a
-node whose one policy is that path reads `off` there, its Kernel line carrying
-the path's own counts, as [the command line](cli.md#reading-state) gives.
-`ranet3 debug segments` shows each segment, each `cap.segment.steer` policy and
-`cap.exit.via`'s path field by field, `ranet3 debug route --peer` whether a
-segment admits the source of a packet arriving through a session, and
-`ranet3 debug trace` what the packets a segment acts on meet, as
-[debugging](development/debug.md) describes. A packet a segment answers shows
-there as an `answer` record, with its ICMP error and what became of it.
+node whose one policy is that path reads `off` there. `status --long` or JSON
+`kernel.exit_path` carries the path's own counts, as
+[the command line](cli.md#reading-state) gives. `ranet3 debug segments` shows
+each segment, each `cap.segment.steer` policy and `cap.exit.via`'s path field by
+field, `ranet3 debug route --peer` whether a segment admits the source of a
+packet arriving through a session, and `ranet3 debug trace` what the packets a
+segment acts on meet, as [debugging](development/debug.md) describes. A packet a
+segment answers shows there as an `answer` record, with its ICMP error and what
+became of it.
 
 An egress segment's packets are counted these ways besides the dropped count.
 Egressed is a packet handed to the exit. The

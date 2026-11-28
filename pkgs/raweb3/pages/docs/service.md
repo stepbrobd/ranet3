@@ -4,7 +4,7 @@
 title: "Running it as a service"
 description: "Running ranet3 from the NixOS and nix-darwin modules."
 created: 2026-09-22
-updated: 2026-11-25
+updated: 2026-11-28
 order: 40
 ---
 
@@ -39,6 +39,11 @@ file from `networking.ranet3.settings`, and gives the control socket a
   };
 }
 ```
+
+An enabled [sourced policy](routing.md#sourced-routing-on-linux) that exceeds
+its initial admission bounds refuses startup before kernel writes, so the unit
+fails instead of starting with a partial policy. A newly up link has no
+unconditional admission time bound.
 
 `settings` is written to the store and is world readable there, so the key and
 the trust document are named by path rather than carried inline. A config file

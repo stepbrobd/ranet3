@@ -4,7 +4,7 @@
 title: "Platforms"
 description: "What differs between Linux, macOS and other platforms: the tun, the route reconciler, the underlay socket, the sockets connected to 1 peer, moving hosts and path MTU."
 created: 2026-09-21
-updated: 2026-11-22
+updated: 2026-11-28
 order: 100
 ---
 
@@ -13,6 +13,10 @@ so the configuration names what it wants and each backend reaches it the way its
 kernel allows. A backend that cannot reach a setting refuses it by name, at
 startup or on a reload. The sections below note where a backend ignores a
 setting or skips a route instead.
+
+Named [sourced routing](routing.md#sourced-routing-on-linux) runs only on Linux.
+A `cap.table.sourced` block is refused at start and reload off Linux, without
+changing the route behavior of an unkeyed node.
 
 ## At a glance
 

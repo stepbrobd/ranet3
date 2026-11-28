@@ -4,7 +4,7 @@
 title: "Debugging a running node"
 description: "The debug tree: its paths, what it promises, its commands and how a view is added."
 created: 2026-10-04
-updated: 2026-11-25
+updated: 2026-11-28
 order: 30
 ---
 
@@ -630,6 +630,7 @@ connections to the reads.
 | `babel.seqno.raised`                  | this node's own seqno rose, at a start of the speaker or for a request                                                                                                                                                                                                                                                                                                                                                                                            |
 | `babel.state.unsaved`, `.unreadable`  | a seqno limit could not be saved, or the state file not read at start                                                                                                                                                                                                                                                                                                                                                                                             |
 | `kernel.pass`                         | a reconciler pass that took a reload, changed, skipped anew or failed                                                                                                                                                                                                                                                                                                                                                                                             |
+| `kernel.sourced`                      | a committed sourced answer, count, protection or failure state changed, or the keyed policy was withdrawn, with state, named, supported, pairs, rules and limited                                                                                                                                                                                                                                                                                                 |
 | `kernel.cover`                        | a family's zero-free cover went into the kernel or came out, on macOS                                                                                                                                                                                                                                                                                                                                                                                             |
 | `kernel.underlay`                     | a cut endpoint or a route scoped beneath the host's came or went, on macOS                                                                                                                                                                                                                                                                                                                                                                                        |
 | `kernel.taken`                        | a reconciler lookup became taken or not, or a taken one changed its answer, on macOS the overlay's alone                                                                                                                                                                                                                                                                                                                                                          |
@@ -1258,10 +1259,9 @@ commands in [the CLI](../cli.md). The 3 files:
   `init`, with a completion for each of its arguments and flags.
 
 Each renderer and wire form has a golden file under `control/testdata/debug`,
-which `go test ./control -update` rewrites. A renderer prints the ages the
-daemon computed rather than reading the clock, so its output is the same on
-every run, but for the egress and kernel lines, which read the time since
-`PassAt`, so their tests hand a `PassAt` relative to now. Two checks walk each
+which `go test ./control -update` rewrites. Most renderers print the ages the
+daemon computed. The `status --long` kernel detail reads time since `PassAt`, so
+its duration checks hand it a `PassAt` relative to now. Two checks walk each
 registered path's type without being told about a new one: the check that no
 debug answer's type holds bytes, an interface or an `esp.ChildSA`, which carries
 its keys in exported fields, and the property that every wire type survives a

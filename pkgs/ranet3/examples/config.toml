@@ -178,6 +178,8 @@ update = "16s"
 # assign_announced = false         # also assign what cap.route announces
 # reconcile = "30s"
 # capture_grace = "10s"            # how long an announced default outlives the last live session, 1s floor
+# Sourced routing is Linux-only and refuses start or reload on other platforms.
+# to names the protected destination, paired with each eligible source network.
 # sourced = { to = ["2001:db8:ffff::/48"], id = 300 }
 #
 # On linux the reconciler derives its policy rules, at priorities 5100 to 5490
@@ -233,6 +235,7 @@ update = "16s"
 # waypoints and then the exit. Every steered packet carries the list inside the
 # tunnel, so the device's MTU comes down by the longest list configured, and
 # one long enough to take it under the 1280 bytes IPv6 requires is refused.
+# from and to together select a source/destination pair, not either alone.
 # [[cap.segment.steer]]
 # from = "3fff:a::203:0:113:10/128"
 # to = "2001:db8:2::/48"

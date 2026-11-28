@@ -5,7 +5,7 @@
 title: "What it deliberately doesn't do"
 description: "What ranet3 deliberately does not do, and why."
 created: 2026-08-17
-updated: 2026-11-25
+updated: 2026-11-28
 order: 10
 ---
 
@@ -459,7 +459,7 @@ in place of the mesh's choice: in such a family 5440 is absent, so a lookup ends
 as above, at 5450 under the switch, mode 3's default, and by main under
 `fallback = "uplink"`, and a socket bound to an address of this node's own on
 `lo` meets 5430 and the steered default and leaves by `via`'s exit.
-`ranet3 status` names the family, and an overlay address on the tun, from
+`status --long` names the family, and an overlay address on the tun, from
 `cap.table` or another writer, brings mode 2's rules back on the pass it
 [wakes](../routing.md#when-a-pass-runs). Another program's rule ahead of 5440,
 such as Tailscale's at 5270 while it uses an exit node, takes the host's traffic
@@ -476,7 +476,7 @@ with the utun. Under `fallback = "none"` it meets the rejects of
 [the kill switch on macOS](#the-kill-switch-on-macos) instead, with the costs
 that section gives. A family the tun holds no overlay address of is left out of
 the mode, its routes scoped to the utun as in mode off, so its traffic stays on
-the host's own routes, and `ranet3 status` names it.
+the host's own routes, and `status --long` names it.
 
 macOS refuses a route out of an interface that holds no address of the route's
 family, scoped or not, with `ENETUNREACH`
@@ -1544,7 +1544,7 @@ TIME_WAIT close.
 | An IPv4 source-specific route                                                                                                         | Never installs it, and warns once. The mesh's own table still applies it                                                                                                                                |
 | A prefix lying wholly in a range `overlay` refuses, such as a multicast, link-local or loopback prefix                                | Never installs it, and warns once. Each names a link, a group, the host or no host rather than a destination                                                                                            |
 | On macOS, a route of a family the utun holds no address of                                                                            | Installs none out of the utun, as [the host's own traffic](#routes-that-carry-the-hosts-own-traffic) gives                                                                                              |
-| On macOS, a hold around live routes of the mesh, as [holds around live routes](../routing.md#holds-around-live-routes-on-macos) gives | Cuts it into its pieces around them, up to 4,096 pieces in place of the holds a pass cuts, both families together, and `ranet3 status` counts the holds left whole whose pieces would pass what is left |
+| On macOS, a hold around live routes of the mesh, as [holds around live routes](../routing.md#holds-around-live-routes-on-macos) gives | Cuts it into its pieces around them, up to 4,096 pieces in place of the holds a pass cuts, both families together, and `status --long` or JSON `kernel.holds_whole` counts those left whole in that run |
 | A route another program changed without a notification                                                                                | Repairs it at the next pass, every 30 seconds unless `cap.table.reconcile` says otherwise                                                                                                               |
 
 The kernel's IPv4 table has no source-specific lookup. Installing such a route
@@ -1559,8 +1559,9 @@ the order
 [holds around live routes](../routing.md#holds-around-live-routes-on-macos)
 gives, so one peer's routes inside a prefix it withdrew can spend it ahead of
 another peer's hold, which then goes in whole and answers as that section gives.
-`ranet3 status` and the pass's event count the pieces and the holds left whole,
-and name neither whose routes spent the budget nor whose hold went in whole.
+`status --long`, JSON and the pass's event count the pieces and the holds left
+whole, and name neither whose routes spent the budget nor whose hold went in
+whole.
 
 A route of the mesh that arrives, leaves or changes can leave one hold whole and
 cut thousands of others in its place, or the reverse. So a pass deletes at most

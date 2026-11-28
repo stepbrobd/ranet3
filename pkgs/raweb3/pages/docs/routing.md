@@ -4,7 +4,7 @@
 title: "Routing"
 description: "How Babel picks a route, and how the reconciler puts it into the kernel."
 created: 2026-10-16
-updated: 2026-11-25
+updated: 2026-11-28
 order: 45
 ---
 
@@ -631,6 +631,49 @@ its own prefixes would end at row L11 of
 [where a lookup ends](#where-a-lookup-ends-on-linux), into the tun and out
 through that exit.
 
+### Sourced routing on Linux
+
+With `cap.table.sourced`, the Linux reconciler protects each named IPv6
+destination D for host output and for forwarded packets from up non-tun
+ingresses, including an unnumbered ingress carrying a source this node
+announces. Its marked transport keeps its separate lookup. For each supported
+source network it chooses an eligible peer in table 201, or holds the packet
+against the uplink. A route in main at least as specific as D wins first,
+regardless of origin: connected `kernel` routes and installed `ra` routes count
+when present. The status answer names the actual winning prefix and numeric
+protocol, including a more specific route within D. A shorter covering route
+does not make an exception. A held child remains held even when another part of
+its source and destination pair has a peer.
+
+The read-back answer distinguishes `tunnel`, `main`, `refused`, `pending` and
+`unknown`. `pending` means the requested hold has not read back and an older
+cover might still admit the packet. `unknown` follows a failed listing or
+ownership check. Installed protection is not proof of packet carriage. The
+initial admission refuses more than 16 named destinations or 16
+destination/source pairs before a kernel write, at startup, enable or reload. A
+later new source over that limit leaves earlier eligible pairs in place and
+reports `limited` without admitting the new peer. Initial IPv6 rules, including
+guards, are bounded by 97. A restart with that source already up can refuse
+admission again. `status --long` reports N named destinations, S supported
+source networks, P=N*S, the observed rule count R, protection and each distinct
+answer. JSON keeps the numeric last stored `sourced.rules` while `sourced.state`
+is `failing`, but it is not verified current then: `status --long` prints
+`R unknown` and the error. The `kernel.sourced` event reports committed answer
+changes, not each packet.
+
+From the instant a new source, ingress or main route can answer until the
+5401/5404 rules write and read back, an unnumbered up ingress with an announced
+source, a disjoint addressed link or a covering connected route can send toward
+main or the uplink, including in mode off. An n-or-longer main winner is
+intentional even after readback. DAD versus `nodad`, scheduling, failed or
+repeated netlink work, a stopped daemon, over-cap restart and reboot before
+startup give no unconditional time bound. External boot or link isolation is an
+operator option, not a daemon guarantee. A clean stop or `down` leaves read-back
+held protection, while explicit disable and key removal withdraw it. A failing
+withdrawal remains visible as an unverified status instead of claiming that
+protection ended. This policy applies only to the named D, not to arbitrary
+destinations or non-Linux hosts.
+
 ### Policy rules on Linux
 
 The reconciler derives its policy rules from `overlay` and this node's own
@@ -948,7 +991,7 @@ and writes the chains. A read that follows a write takes no table for one that
 is not there, and fails with `ENOENT` where its dump of the tables holds no
 table `inet ranet3`. Any other failed read writes nothing, a read that follows a
 write and a read whose fresh dump fails or still holds the table among them: the
-pass logs `kernel reconcile failed, retrying`, status names the switch
+pass logs `kernel reconcile failed, retrying`, `status --long` names the switch
 `not holding` with the error, and the pass is [retried](#when-a-pass-runs).
 While the chains do not read back as written, or cannot be written, such as on a
 kernel without `nf_tables`, the reconciler leaves 5405 and 5435 out and keeps
@@ -957,8 +1000,8 @@ or 5450 rather than main, but for a route of main longer than /0, which still
 wins at 5410 as in mode 2, the cost
 [limits](design/limits.md#routes-that-carry-the-hosts-own-traffic) names. While
 the chains hold, their drop takes that route's traffic beyond the LAN unless
-another line passes it. Status names the switch `not holding` with the reason,
-which for a flag another writer set on the table reads as
+another line passes it. `status --long` names the switch `not holding` with the
+reason, which for a flag another writer set on the table reads as
 [sharing a host](coexistence.md#the-nftables-table) gives, and the services on
 the uplink's address answer only where 5410 or 5445 routes the reply, or the
 mark 0x72 sends it past them to main, until the chains read back. The
@@ -1453,18 +1496,14 @@ a rule stays after an uninstall too. Each is deleted by
 `ip -6 rule del priority <priority> to <prefix> protocol <proto>` for an IPv6
 prefix.
 
-The `Kernel` line of `ranet3 status` counts as refused while down the distinct
-overlay prefixes whose pair of down rules the last pass found standing, by its
-listing of the rules and its writes, where there are any, while the reconciler
-is stopped or its start has not finished. It counts rules that stand, not
-packets refused, a second copy of a rule counting nothing more. A node that runs
-counts none. Where the last pass could not list the rules the line reads
-`refused while down not known`, since its writes alone do not say what stands,
-and the writes owed stay those the last pass that listed the rules found. Where
-the last pass owes writes the line counts them, as `2 writes owed`, and `--json`
-lists each as `kernel.owed`, as does the warning, once each time the list
-changes. Beside a running set a delete of the down set is owed by prefix,
-`delete the pair of <prefix> (32765, 32764)` or
+The `Kernel` row of `ranet3 status` always counts installed, skipped, refused
+while down and owed writes, even when each is zero. Refused while down counts
+distinct overlay prefixes whose down-set rules the last pass found standing, not
+refused packets. When the listing failed it says `unknown refused while down`,
+and `kernel.held_unknown` in JSON is true. `status --long` carries the last-pass
+detail, and `kernel.owed` lists each owed write in JSON. The warning also lists
+them once each time the list changes. Beside a running set a delete of the down
+set is owed by prefix, `delete the pair of <prefix> (32765, 32764)` or
 `delete the refusal of <prefix> (32765)`: either refuses the underlay's marked
 packet to an endpoint main reaches by a shorter route, and for a prefix a reload
 removed the host's own send there. An add that did not land reads
@@ -1921,8 +1960,8 @@ puts in or takes out logs
 `kernel changed the cover a zero route is installed as` and records a
 `kernel.cover` event, which the withdrawal of `ranet3 down` or
 `ranet3 disable reconciler` does not, as
-[debugging](development/debug.md#events) says. The Kernel line of
-`ranet3 status` names the covered families.
+[debugging](development/debug.md#events) says. `status --long` and JSON
+`kernel.cover` name the covered families.
 
 A member that another program's route at its key refuses, or that fails to
 install, takes its family's cover out whole, since part of a cover would split
@@ -1943,8 +1982,8 @@ the utun as the route would, and traffic is forwarded as Babel selects.
 
 A family the tun holds no overlay address of is left out of the mode. Its routes
 keep mode off's form, scoped to the utun, and the family's traffic stays on the
-host's own routes. The Kernel line of `ranet3 status` names it, and the change
-logs
+host's own routes. `status --long` and JSON `kernel.exit.unaddressed` name it.
+The change logs
 `kernel leaves a family out of the exit mode, the tun holding no overlay address of it`
 and records a `kernel.exit` event, as [watching it](#watching-it) lists. Where
 the utun holds no address of a family at all, in mode off as in a family the
@@ -2033,7 +2072,7 @@ program wrote in exactly that shape is taken over and deleted at a stop. A route
 of another shape at a key is reported and never removed, and while it stands the
 switch does not read back. Each pass reads the rejects back from its one dump of
 the table and writes any that is missing. While one does not read back as
-written, `ranet3 status` names the switch `not holding` with the reason, such as
+written, `status --long` names the switch `not holding` with the reason, such as
 `another program's route 128.0.0.0/1 via 192.0.2.1 on en0 holds a key of the switch's`,
 or for a route of the mesh's whose halves wait for its delete,
 `this node's own route 128.0.0.0/1 on utun5 holds a key of the switch's until it goes in as its halves`.
@@ -2143,9 +2182,10 @@ These commands show the routes. [Command line](cli.md) lists their flags.
 - `ranet3 whois <address>` shows the longest prefix covering an address first,
   then the shorter ones, each with the neighbor that is its next hop, or this
   node for one of its own.
-- The Kernel line of `ranet3 status` shows where the reconciler writes, the
-  routes installed and skipped, and the last pass. It then names each lookup the
-  reconciler last found taken, an overlay prefix on Linux as
+- The `Kernel` row of `ranet3 status` has one state and four fixed counts:
+  installed, skipped, refused while down and writes owed. `status --long` gives
+  the reconciler's location, last pass and diagnostics, including each lookup
+  the reconciler last found taken, an overlay prefix on Linux as
   `overlay 192.0.2.0/24 taken by table 51820 dev wg0`, or
   `a refusal (permission denied)` in place of the table, and on macOS by the
   route it ends at, as `overlay 192.0.2.0/24 taken by 192.0.2.0/25 on utun7`,

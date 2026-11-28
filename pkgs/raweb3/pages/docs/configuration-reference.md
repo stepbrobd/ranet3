@@ -398,6 +398,14 @@ configure.
 | `reconcile`        | duration         | `"30s"` | Interval of the periodic pass that corrects drift                                |
 | `capture_grace`    | duration         | `"10s"` | How long a route carrying this host's own traffic outlives the last live session |
 
+`sourced` names IPv6 destinations under `cap.table`, with required `to` and
+optional `id`. An omitted ID derives as the normalized mesh table ID plus one.
+The two IDs must differ and neither can be reserved. Initial admission refuses
+over 16 named destinations or 16 destination/source pairs before a kernel write,
+with at most 97 initial IPv6 rules including guards. `sourced` is refused at
+startup and reload off Linux. The admission, main exceptions and new-link
+interval are in [sourced routing](routing.md#sourced-routing-on-linux).
+
 - `id` 253, 254 and 255 are refused. They are `default`, `main` and `local`.
 - `proto` 1 to 4 are refused. They belong to the kernel and to systemd-networkd.
   The reconciler reads back and deletes only routes and rules that carry its

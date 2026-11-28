@@ -82,22 +82,29 @@ exits 1. The page of each writer gives what a refusal leaves of it:
 
 ## Reading state
 
-| Command           | Help                                      | Flags                   |
-| ----------------- | ----------------------------------------- | ----------------------- |
-| `status`          | Show state of this node                   | `--control`, `--json`   |
-| `neighbors`       | Show Babel neighbors and link costs       | `--control`, `--json`   |
-| `routes`          | Show the Babel route table                | `--control`, `--json`   |
-| `sessions`        | Show IKE sessions                         | `--control`, `--json`   |
-| `peers`           | Show peers and their connection state     | `--control`, `--json`   |
-| `whois <address>` | Show the prefix and peer that reach an IP | `--control`, `--json`   |
-| `ip`              | Show mesh IP addresses                    | `--control`, `--json`   |
-| `exit list`       | List exit nodes and the one in use        | `--control`, `--json`   |
-| `bugreport`       | Print node state for a bug report         | `--control`             |
-| `metrics`         | Print metrics in Prometheus format        | `--control`             |
-| `version`         | Print ranet3 version                      | `--daemon`, `--control` |
+| Command           | Help                                      | Flags                           |
+| ----------------- | ----------------------------------------- | ------------------------------- |
+| `status`          | Show state of this node                   | `--control`, `--json`, `--long` |
+| `neighbors`       | Show Babel neighbors and link costs       | `--control`, `--json`           |
+| `routes`          | Show the Babel route table                | `--control`, `--json`           |
+| `sessions`        | Show IKE sessions                         | `--control`, `--json`           |
+| `peers`           | Show peers and their connection state     | `--control`, `--json`           |
+| `whois <address>` | Show the prefix and peer that reach an IP | `--control`, `--json`           |
+| `ip`              | Show mesh IP addresses                    | `--control`, `--json`           |
+| `exit list`       | List exit nodes and the one in use        | `--control`, `--json`           |
+| `bugreport`       | Print node state for a bug report         | `--control`                     |
+| `metrics`         | Print metrics in Prometheus format        | `--control`                     |
+| `version`         | Print ranet3 version                      | `--daemon`, `--control`         |
 
 `--control` names the socket to read, `/var/run/ranet3/control.sock` by default.
-`--json` prints JSON instead of the table.
+`--json` prints JSON instead of the table. `status --long` keeps the same
+structured observation and prints the last kernel pass's location, age, owed and
+skipped details, Darwin cover and holds, taken lookups, exit and fallback,
+`cap.exit.via` steered and unrouted counts and the
+[sourced answer](routing.md#sourced-routing-on-linux). The short `Kernel` row
+prints `off`, `ready` or `not ready` and four fixed counts, including zero. The
+`Kernel:` note below the table identifies an abnormal state. JSON keeps the
+fields under `kernel`.
 
 - `status` names on its `Role` line the `initiator`, `responder`, `full_mesh`
   and `no_transit` of
@@ -125,30 +132,20 @@ exits 1. The page of each writer gives what a refusal leaves of it:
   `--json` carries them under `egress`, in `ready`, `unready` and `skipped`. On
   macOS that line names the userspace exit, with its flows and buffers on the 2
   lines under it, as [exit nodes](exit-nodes.md#watching-it) shows.
-- `status` on a node with `cap.exit` names, on its `Kernel` line, the links the
-  last pass forwarded, each link a `forward` entry matched and the pass left out
-  with the reason, and a family the tun holds no overlay address of, as
-  [watching it](routing.md#watching-it) shows. Under `fallback = "none"` it
-  names [the kill switch's](routing.md#the-kill-switch-on-linux) state,
-  `holding`, `passing` or `not holding` with the reason, what the last lines of
-  both chains dropped, summed, or `drops not read yet` until a read of its
-  chains by this process succeeds, and neither on macOS, where ranet3 reads no
-  count of [the rejects](routing.md#the-kill-switch-on-macos), a connected
-  network or a part of one left out of the LAN, an endpoint name whose last
-  lookup failed and on Linux a DNS server beyond the LAN. `--json` carries them
-  under `kernel.exit`, the families in `unaddressed`. Under `cap.exit.via` the
-  line names the path, its outer source, `up`, or `down` at the first segment
-  that does not resolve with the mesh's answer, the families whose steered
-  default, or on macOS its zero-free cover, is installed, and the path's own
-  `steered` and `unrouted` counts, which `--json` carries under
-  `kernel.exit_path`.
+- `status --long` on a node with `cap.exit` names the links the last pass
+  forwarded, each link a `forward` entry matched and left out with its reason,
+  any unaddressed family, the kill switch state and its drops if read, the LAN
+  networks left out, unresolved endpoints and out-of-LAN resolvers. Under
+  `cap.exit.via` it names the path, outer source, state, installed steered
+  defaults and the path's own steered and unrouted counts. JSON retains these
+  fields under `kernel.exit` and `kernel.exit_path`.
 - `down` withdraws [the kill switch's](routing.md#the-kill-switch-on-linux)
   rules and chains, or on macOS
   [its rejects](routing.md#the-kill-switch-on-macos), with the rest of the
   reconciler's, as a clean stop does, and `up` writes them again. On Linux
   `down` and a clean stop leave the down set of
   [the overlay while a node is down](routing.md#the-overlay-while-a-node-is-down),
-  which the `Kernel` line of `status` counts as refused while down, unless
+  which the fixed `Kernel` row of `status` counts as refused while down, unless
   `ranet3 disable reconciler` stopped the reconciler before them. That verb
   withdraws the down set.
 - `debug netmon` lists each family's links outside the mesh with their addresses

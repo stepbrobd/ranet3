@@ -4,7 +4,7 @@
 title: "Reloading"
 description: "What a reload applies without dropping a session, and what needs a restart."
 created: 2026-09-12
-updated: 2026-11-25
+updated: 2026-11-28
 order: 70
 ---
 
@@ -71,6 +71,13 @@ as [what a reload refuses](#what-a-reload-refuses) describes.
 | `cap.exit`, written, removed, or `forward`                     | applied                                  | The reconciler's next pass adds or removes [exit mode's](routing.md#exit-mode-on-linux) rules, or on macOS moves the routes into [the zero-free cover](routing.md#the-zero-free-cover-on-macos) and back, with no restart. Refused on an exit, off Linux and macOS, on macOS for `forward` and `inbound`, and where `forward` names the tun or a default's link. A new order of `forward` is no change.                                                |
 | `cap.exit.fallback`, `cap.exit.inbound`, `cap.exit.lan`        | applied                                  | The reconciler's next pass writes or deletes [the kill switch's](routing.md#the-kill-switch-on-linux) rules and chains, or on macOS [its rejects](routing.md#the-kill-switch-on-macos), or on Linux rewrites the switch's sets, in one pass. A reload to `"uplink"` or without `cap.exit` withdraws the switch. A new order or spelling of `inbound` that lists the same ports, or a new order of `lan`, is no change. Refused on macOS for `inbound`. |
 | `cap.exit.via`, written, changed or removed                    | applied                                  | The dataplane swaps its steering table and moves the tun's MTU by the path's overhead, and the reconciler's next pass installs or withdraws [mode 3's](routing.md#mode-3-on-linux) steered defaults and, with `fallback` unwritten, the kill switch. Nothing restarts.                                                                                                                                                                                 |
+
+Adding `cap.table.sourced` is subject to
+[initial admission](routing.md#sourced-routing-on-linux). Key-only removal
+withdraws the policy after read-back. When both old and new keys exist, a
+different normalized sourced ID refuses the reload with
+`config: cap.table.sourced id changed, restart to apply`. An omitted ID and an
+equal explicit derived ID compare equal.
 
 ## Sessions the trust document no longer admits
 

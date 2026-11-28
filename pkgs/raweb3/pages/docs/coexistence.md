@@ -4,7 +4,7 @@
 title: "Sharing a host"
 description: "Sharing a host with other routing daemons, firewalls and VPNs."
 created: 2026-09-12
-updated: 2026-11-27
+updated: 2026-11-28
 order: 110
 ---
 
@@ -210,8 +210,8 @@ that takes it. After each pass that applies without error, among the passes
   reported, since ranet3's underlay inside another tunnel is a setup that works.
 
 The reconciler reports a lookup when it becomes taken, when a taken one's answer
-changes and when it stops being taken, in the log, on the Kernel line of
-`ranet3 status`, in 2 gauges and as the `kernel.taken` event, as
+changes and when it stops being taken, in the log, `status --long`, JSON
+`kernel.taken`, 2 gauges and the `kernel.taken` event, as
 [watching it](routing.md#watching-it) lists. The check has these limits:
 
 - It asks 1 address of each prefix, so a rule that takes only part of a prefix
