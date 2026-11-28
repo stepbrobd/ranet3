@@ -432,6 +432,8 @@ func reloadable(old, next *config.Config) error {
 		return fmt.Errorf("config: link.endpoints changed, restart to apply")
 	case old.Transits() != next.Transits():
 		return fmt.Errorf("config: cap.transit changed, restart to apply")
+	case moved == "sourced id changed":
+		return fmt.Errorf("config: cap.table.sourced id changed, restart to apply")
 	case moved != "":
 		return fmt.Errorf("config: cap.table %s, restart to apply", moved)
 	case !sameCrypto(old, next):

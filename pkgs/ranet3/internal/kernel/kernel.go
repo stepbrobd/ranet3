@@ -1067,6 +1067,8 @@ func (t Table) Unreloadable(next Table) string {
 		return "id"
 	case t.Proto != next.Proto:
 		return "proto"
+	case t.Sourced != nil && next.Sourced != nil && t.Sourced.ID != next.Sourced.ID:
+		return "sourced id"
 	}
 	return ""
 }
@@ -1217,6 +1219,9 @@ func (r *Reconciler) SetTable(t Table, overlay []schema.Prefix, announced []neti
 	}
 	t = t.Normalized()
 	if setting := r.Table().Unreloadable(t); setting != "" {
+		if setting == "sourced id" {
+			return fmt.Errorf("kernel: cap.table.sourced id changed, restart to apply")
+		}
 		return fmt.Errorf("kernel: cap.table %s changed, restart to apply", setting)
 	}
 	if err := refuseWithoutSessions(t, r.rt.Sessions); err != nil {

@@ -284,6 +284,35 @@ func TestReloadRefusesWhatTheReconcilerCannotTake(t *testing.T) {
 	}
 }
 
+func TestSourcedIDChangeRefusedBeforeKernelWrites(t *testing.T) {
+	destination := []schema.Prefix{schema.MustPrefix("2001:db8:1::/96")}
+	start := Table{Sourced: &Sourced{To: destination}}
+	r, _, fake := harness(t, start)
+	before := fake.snapshot()
+	next := Table{Sourced: &Sourced{To: destination, ID: 203}}
+	if err := r.SetTable(next, nil, nil); err == nil || err.Error() != "kernel: cap.table.sourced id changed, restart to apply" {
+		t.Fatalf("changed sourced id returned %v", err)
+	}
+	if got := r.Table(); !reflect.DeepEqual(got, start.Normalized()) || !slices.Equal(fake.snapshot(), before) {
+		t.Fatal("refusal changed the table or kernel")
+	}
+}
+
+func TestSourcedIDReloadBoundary(t *testing.T) {
+	destination := []schema.Prefix{schema.MustPrefix("2001:db8:1::/96")}
+	start := Table{Sourced: &Sourced{To: destination}}
+	for name, next := range map[string]Table{
+		"equal explicit id": {Sourced: &Sourced{To: destination, ID: DefaultTable + 1}},
+		"key removal":       {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if setting := start.Unreloadable(next); setting != "" {
+				t.Fatalf("reload of %s incorrectly needs restart: %s", name, setting)
+			}
+		})
+	}
+}
+
 // the pass a reload runs is recorded whatever it moved, so a reload that changed only a timer still shows the reconciler took it
 func TestReloadPassIsRecordedAsAReload(t *testing.T) {
 	bus := events.New()

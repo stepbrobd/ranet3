@@ -614,13 +614,26 @@ func changedNothing(t *testing.T, c *Client, old *config.Config, bus *events.Bus
 	}
 }
 
+func unsupportedSourcedRefusal() string {
+	platform := runtime.GOOS
+	if platform == "darwin" {
+		platform = "macOS"
+	}
+	return "kernel: cap.table.sourced is refused on " + platform + ", where this build writes no policy rules"
+}
+
 func TestReloadRefusesMovingTheTableByName(t *testing.T) {
 	for name, move := range map[string]struct {
 		old, next *kernel.Table
 		naming    string
 	}{
-		"another id":          {&kernel.Table{}, &kernel.Table{ID: 201}, "cap.table id changed"},
-		"another proto":       {&kernel.Table{}, &kernel.Table{Proto: kernel.DefaultProtocol + 1}, "cap.table proto changed"},
+		"another id":    {&kernel.Table{}, &kernel.Table{ID: 201}, "cap.table id changed"},
+		"another proto": {&kernel.Table{}, &kernel.Table{Proto: kernel.DefaultProtocol + 1}, "cap.table proto changed"},
+		"another sourced id": {&kernel.Table{Sourced: &kernel.Sourced{
+			To: []schema.Prefix{schema.MustPrefix("2001:db8:1::/96")}}},
+			&kernel.Table{Sourced: &kernel.Sourced{
+				To: []schema.Prefix{schema.MustPrefix("2001:db8:1::/96")}, ID: 203}},
+			"config: cap.table.sourced id changed, restart to apply"},
 		"the block written":   {nil, &kernel.Table{}, "cap.table added"},
 		"the block taken out": {&kernel.Table{}, nil, "cap.table removed"},
 	} {
@@ -631,13 +644,55 @@ func TestReloadRefusesMovingTheTableByName(t *testing.T) {
 			next.Cap.Table = move.next
 			joinedAndAnnounced(t, c, &next)
 			writeConfig(t, path, &next)
-			if err := c.ReloadFrom(path); err == nil || !strings.Contains(err.Error(), move.naming) {
-				t.Fatalf("the reload was refused with %v, want it to say %q", err, move.naming)
+			want := move.naming
+			if name == "another sourced id" && runtime.GOOS != "linux" {
+				want = unsupportedSourcedRefusal()
+			}
+			if err := c.ReloadFrom(path); err == nil || (name == "another sourced id" && err.Error() != want) || (name != "another sourced id" && !strings.Contains(err.Error(), want)) {
+				t.Fatalf("the reload was refused with %v, want it to say %q", err, want)
 			}
 			if len(reconciler.tables) != 0 {
 				t.Errorf("the refused reload handed the reconciler %+v", reconciler.tables)
 			}
 			changedNothing(t, c, old, bus)
+		})
+	}
+}
+
+func TestReloadKeepsEqualSourcedIDAndRemovesTheKey(t *testing.T) {
+	destination := []schema.Prefix{schema.MustPrefix("2001:db8:1::/96")}
+	for name, replacement := range map[string]*kernel.Sourced{
+		"equal derived id": {To: destination, ID: kernel.DefaultTable + 1},
+		"key removal":      nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, path, reconciler, bus := reloadOf(t, func(old *config.Config) {
+				old.Cap.Table = &kernel.Table{Sourced: &kernel.Sourced{To: destination}}
+			})
+			old := c.config()
+			next := *old
+			next.Cap.Table = &kernel.Table{Sourced: replacement}
+			writeConfig(t, path, &next)
+			err := c.ReloadFrom(path)
+			if name == "equal derived id" && runtime.GOOS != "linux" {
+				if want := unsupportedSourcedRefusal(); err == nil || err.Error() != want {
+					t.Fatalf("the sourced reload was refused with %v, want %q", err, want)
+				}
+				if len(reconciler.tables) != 0 {
+					t.Errorf("the refused reload handed the reconciler %+v", reconciler.tables)
+				}
+				changedNothing(t, c, old, bus)
+				return
+			}
+			if err != nil {
+				t.Fatalf("the sourced reload was refused: %v", err)
+			}
+			if got := c.config().Cap.Table.Sourced; !reflect.DeepEqual(got, replacement) {
+				t.Errorf("reload stored sourced policy %+v, want %+v", got, replacement)
+			}
+			if name == "key removal" && len(reconciler.tables) != 1 {
+				t.Errorf("key removal handed the reconciler %d tables", len(reconciler.tables))
+			}
 		})
 	}
 }
