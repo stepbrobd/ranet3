@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -118,6 +120,93 @@ func TestStatusCarriesEveryCounterOfTheMesh(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("the scrape carries the series\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestStatusHandlerSerializesSourcedStates(t *testing.T) {
+	c := testClient(t)
+	var observed *kernel.SourcedStatus
+	c.SetReconciler(Reconciler{Status: func() control.KernelStatus {
+		status := kernelStatusOf("table 200 protocol 155", kernel.Table{ID: 200, Proto: 155},
+			kernel.Stats{At: time.Now()})
+		if observed != nil {
+			status.Sourced = sourcedStatus(*observed)
+		}
+		return status
+	}})
+	destination := netip.MustParsePrefix("2001:db8:1::/96")
+	for _, phase := range []struct {
+		name    string
+		status  *kernel.SourcedStatus
+		rules   int
+		long    string
+		error   string
+		unknown bool
+	}{
+		{name: "no key"},
+		{name: "first failure", status: &kernel.SourcedStatus{
+			State: "failing", Error: "read admission: input/output error",
+			Answers: []kernel.SourcedAnswer{{To: destination, Kind: "unknown"}}},
+			long: "R unknown", error: "read admission: input/output error", unknown: true},
+		{name: "first readback", status: &kernel.SourcedStatus{
+			State: "active", Rules: 6, Answers: []kernel.SourcedAnswer{{To: destination, Kind: "refused", Protection: true}}},
+			rules: 6, long: "R 6,"},
+		{name: "cached failure", status: &kernel.SourcedStatus{
+			State: "failing", Rules: 6, Error: "read main: input/output error",
+			Answers: []kernel.SourcedAnswer{{To: destination, Kind: "unknown"}}},
+			rules: 6, long: "R unknown", error: "read main: input/output error", unknown: true},
+		{name: "recovered readback", status: &kernel.SourcedStatus{
+			State: "active", Rules: 8, Answers: []kernel.SourcedAnswer{{To: destination, Kind: "main",
+				MainPrefix: netip.MustParsePrefix("2001:db8:1::/112"), MainProtocol: 9}}},
+			rules: 8, long: "R 8,"},
+	} {
+		t.Run(phase.name, func(t *testing.T) {
+			observed = phase.status
+			status := c.Status()
+			body, err := json.Marshal(status)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			control.Handler(c).ServeHTTP(response, httptest.NewRequest(http.MethodGet, control.PathStatus, nil))
+			var served control.Status
+			if err := json.Unmarshal(response.Body.Bytes(), &served); err != nil || response.Code != http.StatusOK ||
+				!reflect.DeepEqual(served.Kernel.Sourced, status.Kernel.Sourced) {
+				t.Fatalf("in-memory status socket lost the sourced readback: %d, %+v, %+v, %v",
+					response.Code, served.Kernel.Sourced, status.Kernel.Sourced, err)
+			}
+			if phase.status == nil {
+				if status.Kernel.Sourced != nil || strings.Contains(string(body), `"sourced":`) {
+					t.Fatalf("unkeyed client reported a sourced policy: %s", body)
+				}
+				return
+			}
+			var long strings.Builder
+			control.RenderStatusLong(&long, status)
+			if got := status.Kernel.Sourced; got == nil || got.Rules != phase.rules || got.Error != phase.error ||
+				len(got.Answers) != 1 || (got.Answers[0].Kind == "unknown") != phase.unknown {
+				t.Fatalf("client lost sourced readback: %+v", got)
+			}
+			for _, want := range []string{phase.long, phase.error} {
+				if want != "" && !strings.Contains(long.String(), want) {
+					t.Errorf("long status omitted %q: %s", want, long.String())
+				}
+			}
+			if phase.unknown && strings.Contains(long.String(), fmt.Sprintf("R %d,", phase.rules)) {
+				t.Errorf("long status presented cached rules as current: %s", long.String())
+			}
+			for _, want := range []string{fmt.Sprintf(`"rules":%d`, phase.rules), `"state":"` + phase.status.State + `"`} {
+				if !strings.Contains(string(body), want) {
+					t.Errorf("status JSON omitted %q: %s", want, body)
+				}
+			}
+			if phase.error != "" && !strings.Contains(string(body), `"error":"`+phase.error+`"`) {
+				t.Errorf("status JSON lost readback error: %s", body)
+			}
+			if phase.unknown && !strings.Contains(string(body), `"kind":"unknown"`) {
+				t.Errorf("status JSON invented a winner: %s", body)
+			}
+		})
 	}
 }
 

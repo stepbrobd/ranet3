@@ -203,6 +203,21 @@ func TestJSONPrintsTheWireForm(t *testing.T) {
 	}
 }
 
+func TestStatusLongReadsTheSameSocketStatus(t *testing.T) {
+	socket := serveStub(t)
+	summary, err := execute(t, "status", "--control", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := execute(t, "status", "--control", socket, "--long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(long, summary) || !strings.Contains(long, "Kernel: ") {
+		t.Errorf("long status omitted summary or detail: %q", long)
+	}
+}
+
 // The scrape comes over the control socket, so a node is read without binding
 // a metrics listener for it. The exposition format goes out as it arrived
 // rather than through a renderer, because a monitoring system parses it.

@@ -5,6 +5,7 @@ package control
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -175,7 +176,7 @@ func TestWhoisNamesAnAssignedAddressThisNodes(t *testing.T) {
 func TestStatusSaysTheRoleInWords(t *testing.T) {
 	var out strings.Builder
 	RenderStatus(&out, Status{Node: "example/laptop", Initiator: true, Responder: false, FullMesh: true, NoTransit: true})
-	for _, want := range []string{"example/laptop", "initiator", "full mesh", "no transit", "off, routes configured externally"} {
+	for _, want := range []string{"example/laptop", "initiator", "full mesh", "no transit", "off, 0 installed, 0 skipped, 0 refused while down, 0 writes owed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("status printed as %q, want it to carry %q", out.String(), want)
 		}
@@ -215,6 +216,7 @@ func TestStatusSaysForwardingItCouldNotReadIsUnknown(t *testing.T) {
 func TestStatusSegmentLineRendersAsTheGoldenFile(t *testing.T) {
 	status := downStatus()
 	status.Down = nil
+	status.Kernel.Disabled = false
 	status.Segments = []string{"3fff:b:0:106::1 End.DT46", "3fff:b:0:106::2 End"}
 	var out strings.Builder
 	for _, counters := range []SegmentCounters{
@@ -254,6 +256,7 @@ func TestStatusTransitLineRendersAsTheGoldenFile(t *testing.T) {
 func TestStatusESPLineRendersAsTheGoldenFile(t *testing.T) {
 	status := downStatus()
 	status.Down = nil
+	status.Kernel.Disabled = false
 	every := ESPCounters{InboundPackets: 41822931, InboundDropped: 3, InboundCE: 1207, InboundECNUnused: 2, ReceiveDropped: 5, ReceiveRefused: 14, Keepalives: 9}
 	var out strings.Builder
 	for _, counters := range []ESPCounters{
@@ -426,6 +429,7 @@ func TestUserspaceFlowsLineOpensWithTheFlowsCounted(t *testing.T) {
 func TestStatusPlacesTheUserspaceRowsUnderEgress(t *testing.T) {
 	status := downStatus()
 	status.Down = nil
+	status.Kernel.Disabled = false
 	status.Border = &BorderStatus{Where: "nftables table inet ranet3 chain entry", Ready: true}
 	for _, test := range []struct {
 		egress EgressStatus
@@ -494,6 +498,7 @@ func TestStatusBoundsNeighborNotesWithoutTruncatingJSON(t *testing.T) {
 func TestStatusBorderLineRendersAsTheGoldenFile(t *testing.T) {
 	status := downStatus()
 	status.Down = nil
+	status.Kernel.Disabled = false
 	status.Border = &BorderStatus{
 		Where:  "nftables table inet ranet3 chains antispoof and entry",
 		Inside: []string{"ranet3", "lo", "dummy0"},
@@ -597,7 +602,7 @@ func TestKernelLineNamesWhatAnotherProgramsRuleTakes(t *testing.T) {
 	}
 	golden(t, "kernel-taken.txt", []byte(kernelLine(status)+"\n"))
 	goldenJSON(t, "kernel-taken.json", status)
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "taken") {
+	if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "taken") {
 		t.Errorf("the kernel line reads %q with nothing taken, want no taken clause", line)
 	}
 }
@@ -609,7 +614,7 @@ func TestKernelLineNamesTheCoveredFamilies(t *testing.T) {
 	status := KernelStatus{Enabled: true, Where: "interface utun6", Installed: 16, Cover: []string{"ipv4", "ipv6"}}
 	golden(t, "kernel-cover.txt", []byte(kernelLine(status)+"\n"))
 	goldenJSON(t, "kernel-cover.json", status)
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "interface utun6"}); strings.Contains(line, "cover") {
+	if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "interface utun6"}); strings.Contains(line, "cover") {
 		t.Errorf("the kernel line reads %q with nothing covered, want no cover clause", line)
 	}
 }
@@ -618,15 +623,15 @@ func TestKernelLineNamesTheCoveredFamilies(t *testing.T) {
 // where there are any, says nothing of them where there are none, and says the
 // count is not known where the last pass could not list the rules
 func TestKernelLineCountsTheOverlayPrefixesRefusedWhileDown(t *testing.T) {
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", HeldUnknown: true}); !strings.Contains(line, ", refused while down not known") {
+	if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", HeldUnknown: true}); !strings.Contains(line, ", refused while down not known") {
 		t.Errorf("with the count not known the kernel line reads %q, want it to say so", line)
 	}
 	for held, want := range map[int]string{1: ", 1 refused while down", 2: ", 2 refused while down"} {
-		if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", Held: held}); !strings.Contains(line, want) {
+		if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", Held: held}); !strings.Contains(line, want) {
 			t.Errorf("with %d prefixes refused the kernel line reads %q, want it to hold %q", held, line, want)
 		}
 	}
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "refused") {
+	if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "refused") {
 		t.Errorf("with no prefix refused the kernel line reads %q, want no clause of refusals", line)
 	}
 }
@@ -635,7 +640,7 @@ func TestKernelLineCountsTheOverlayPrefixesRefusedWhileDown(t *testing.T) {
 // and leaves each to --json and the warning
 func TestKernelLineCountsTheWritesOwed(t *testing.T) {
 	owed := []string{"delete the pair of 192.0.2.0/25 (32765, 32764)", "delete the refusal of 3fff::/21 (32765)"}
-	line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", Owed: owed})
+	line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155", Owed: owed})
 	if want := ", 2 writes owed"; !strings.Contains(line, want) || strings.Contains(line, "refused while down") || strings.Contains(line, "32765") {
 		t.Errorf("with writes owed the kernel line reads %q, want it to hold %q and neither a refusal while down nor a write's text", line, want)
 	}
@@ -649,7 +654,7 @@ func TestKernelLineCountsTheCutHolds(t *testing.T) {
 	status := KernelStatus{Enabled: true, Where: "interface utun6", Installed: 40, Skipped: 1, HoldPieces: 31, HoldsWhole: 2, HoldPieceBudget: 4096}
 	golden(t, "kernel-holds.txt", []byte(kernelLine(status)+"\n"))
 	goldenJSON(t, "kernel-holds.json", status)
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "hold") {
+	if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "hold") {
 		t.Errorf("the kernel line reads %q with no hold cut, want no clause of holds", line)
 	}
 }
@@ -672,7 +677,7 @@ func TestKernelLineNamesTheExitModeAndWhatItSkips(t *testing.T) {
 	}
 	golden(t, "kernel-exit.txt", []byte(kernelLine(status)+"\n"))
 	goldenJSON(t, "kernel-exit.json", status)
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "exit") {
+	if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "exit") {
 		t.Errorf("the kernel line reads %q in mode off, want no exit clause", line)
 	}
 }
@@ -715,7 +720,7 @@ func TestKernelLineNamesTheSwitchsState(t *testing.T) {
 	golden(t, "kernel-fallback.txt", []byte(lines.String()))
 	goldenJSON(t, "kernel-fallback.json", exit(&KernelFallback{State: "holding", Dropped: &FallbackDrops{Packets: 12, Bytes: 720},
 		Captured: []string{"198.0.0.0/7"}, Public: []string{"203.0.113.0/24", "2001:db8:a::/64"}, Unresolved: []string{"gateway.example.org"}, Resolvers: []KernelResolver{{Link: "eth0", Address: "203.0.113.53"}}}))
-	if line := kernelLine(exit(nil)); strings.Contains(line, "fallback") {
+	if line := kernelDetailLine(exit(nil)); strings.Contains(line, "fallback") {
 		t.Errorf("the kernel line reads %q under fallback uplink, want no switch clause", line)
 	}
 }
@@ -734,8 +739,93 @@ func TestKernelLineNamesTheExitPath(t *testing.T) {
 		golden(t, name+".txt", []byte(kernelLine(status)+"\n"))
 		goldenJSON(t, name+".json", status)
 	}
-	if line := kernelLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "path") {
+	if line := kernelDetailLine(KernelStatus{Enabled: true, Where: "table 200 protocol 155"}); strings.Contains(line, "path") {
 		t.Errorf("the kernel line reads %q outside mode 3, want no path clause", line)
+	}
+}
+
+func TestKernelSummaryAndLongDetails(t *testing.T) {
+	k := KernelStatus{Enabled: true, Where: "table 200 protocol 155", Table: 200, Protocol: 155,
+		PassAt: time.Now().Add(-time.Second), Installed: 14, Skipped: 1, Held: 2,
+		Owed: []string{"install 3fff::/20"}, ExitPath: &KernelExitPath{
+			Via: []string{"3fff:b:0:206::1"}, Source: "3fff::2", State: "up",
+			Steered: 8, Unrouted: 3,
+		}}
+	var summary, detail strings.Builder
+	RenderStatus(&summary, Status{Kernel: k})
+	RenderStatusLong(&detail, Status{Kernel: k})
+	if !strings.Contains(summary.String(), "not ready, 14 installed, 1 skipped, 2 refused while down, 1 writes owed") ||
+		strings.Contains(summary.String(), "steered") || strings.Contains(summary.String(), "table 200") {
+		t.Fatalf("summary has missing counts or leaked detail: %s", summary.String())
+	}
+	for _, want := range []string{"table 200 protocol 155", "last pass 1 second ago", "exit path via", "8 steered, 3 unrouted"} {
+		if !strings.Contains(detail.String(), want) {
+			t.Errorf("long status omitted %q: %s", want, detail.String())
+		}
+	}
+}
+
+func TestStatusLongKeepsKernelDiagnosticsOffTheShortRow(t *testing.T) {
+	for name, test := range map[string]struct {
+		kernel KernelStatus
+		want   []string
+	}{
+		"taken": {
+			kernel: KernelStatus{Taken: []KernelTaken{
+				{Family: "ipv4", Prefix: "192.0.2.0/24", Answer: "table 51820 dev wg0"},
+				{Family: "ipv6", Endpoint: "2001:db8::7", Source: "2001:db8::10", Interface: "eth0", Answer: "table 300 dev ranet0"},
+			}},
+			want: []string{"overlay 192.0.2.0/24 taken by table 51820 dev wg0",
+				"the underlay's mark taken by table 300 dev ranet0 toward 2001:db8::7 from 2001:db8::10 dev eth0"},
+		},
+		"darwin cover and holds": {
+			kernel: KernelStatus{Where: "interface utun6", Cover: []string{"ipv4", "ipv6"},
+				HoldPieces: 31, HoldsWhole: 2, HoldPieceBudget: 4096,
+				Exit: &KernelExit{Unaddressed: []string{"ipv6"}}},
+			want: []string{"31 pieces of cut holds", "2 holds left whole past the budget of 4096 pieces",
+				"zero-free cover for ipv4 and ipv6", "no IPv6 overlay address on the tun"},
+		},
+		"fallback and skipped": {
+			kernel: KernelStatus{Where: "table 200 protocol 155", Skipped: 2, Owed: []string{"install 3fff::/20"},
+				Exit: &KernelExit{Skipped: []KernelSkip{{Entry: "e*", Link: "eth0", Reason: "default link"}},
+					Fallback: &KernelFallback{State: "not holding", Reason: "netlink: dump interrupted"}}},
+			want: []string{"1 write owed", "forward e* skips eth0, default link", "fallback none not holding", "netlink: dump interrupted"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			test.kernel.Enabled = true
+			test.kernel.PassAt = time.Now().Add(-time.Second)
+			var short, long strings.Builder
+			RenderStatus(&short, Status{Kernel: test.kernel})
+			RenderStatusLong(&long, Status{Kernel: test.kernel})
+			for _, want := range test.want {
+				if strings.Contains(short.String(), want) || !strings.Contains(long.String(), want) {
+					t.Errorf("diagnostic %q in short or absent from long:\nshort %s\nlong %s", want, short.String(), long.String())
+				}
+			}
+			if name == "fallback and skipped" && !strings.Contains(long.String(), "2 skipped") {
+				t.Errorf("long status omitted skipped count: %s", long.String())
+			}
+		})
+	}
+}
+
+func TestSourcedLongFailureDoesNotPresentCachedRulesAsCurrent(t *testing.T) {
+	for _, rules := range []int{0, 27} {
+		status := Status{Kernel: KernelStatus{Enabled: true, Sourced: &KernelSourced{
+			State: "failing", Rules: rules, Error: "readback interrupted",
+			Answers: []KernelSourcedAnswer{{To: "2001:db8:1::/96", Kind: "unknown"}},
+		}}}
+		var out strings.Builder
+		RenderStatusLong(&out, status)
+		if !strings.Contains(out.String(), "R unknown") || !strings.Contains(out.String(), "readback interrupted") ||
+			strings.Contains(out.String(), fmt.Sprintf("R %d,", rules)) {
+			t.Errorf("failed readback reported cached R as current: %s", out.String())
+		}
+		body, err := json.Marshal(status)
+		if err != nil || !strings.Contains(string(body), fmt.Sprintf(`"rules":%d`, rules)) {
+			t.Errorf("status lost cached numeric rules: %s %v", body, err)
+		}
 	}
 }
 

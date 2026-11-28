@@ -126,6 +126,59 @@ func sourcedMirrorHarness(t *testing.T) (*Reconciler, *netlinkPlatform, *sourced
 	return newReconciler(table, Runtime{Interface: "tun7"}, nil, netstack.NewRouteTable(), plat), plat, conn
 }
 
+// SourcedReadbackForTest stages only fake netlink observations for an external status reader.
+func SourcedReadbackForTest(t *testing.T) (*Reconciler, func(fail, ingress bool) error) {
+	t.Helper()
+	r, plat, conn := sourcedMirrorHarness(t)
+	for _, rule := range sourcedStandingRules(r.table.Sourced.To, map[netip.Prefix]struct{}{}) {
+		conn.rules = append(conn.rules, netlink.Message{Kind: unix.RTM_NEWRULE, Data: plat.ruleMessage(rule)})
+	}
+	return r, func(fail, ingress bool) error {
+		conn.failMain = fail
+		if ingress {
+			conn.rules = append(conn.rules, netlink.Message{Kind: unix.RTM_NEWRULE,
+				Data: plat.ruleMessage(sourcedIngressRule(r.rt.Interface))})
+		}
+		err := r.observeSourced(nil)
+		if err != nil {
+			r.sourcedFailure(err)
+		}
+		return err
+	}
+}
+
+func TestSourcedReadbackCachesOnlyTheLastVerifiedRuleCount(t *testing.T) {
+	r, read := SourcedReadbackForTest(t)
+	if err := read(false, false); err != nil {
+		t.Fatalf("first fake-backed readback: %v", err)
+	}
+	previous, ok := r.SourcedStatus()
+	if !ok || previous.Rules == 0 || previous.State == "failing" {
+		t.Fatalf("first readback has no verified rules: %+v, present %t", previous, ok)
+	}
+	err := read(true, false)
+	failed, ok := r.SourcedStatus()
+	if err == nil || !ok || failed.Rules != previous.Rules || failed.State != "failing" ||
+		failed.Error != err.Error() || len(failed.Answers) == 0 || failed.Answers[0].Kind != "unknown" {
+		t.Fatalf("failed readback lost cached count or error: %v, %+v", err, failed)
+	}
+	if err := read(false, true); err != nil {
+		t.Fatalf("recovered fake-backed readback: %v", err)
+	}
+	recovered, ok := r.SourcedStatus()
+	if !ok || recovered.Rules == 0 || recovered.State == "failing" || recovered.Error != "" {
+		t.Fatalf("recovered readback is not current: %+v", recovered)
+	}
+
+	first, firstRead := SourcedReadbackForTest(t)
+	err = firstRead(true, false)
+	zero, ok := first.SourcedStatus()
+	if err == nil || !ok || zero.Rules != 0 || zero.State != "failing" ||
+		zero.Error != err.Error() || len(zero.Answers) == 0 || zero.Answers[0].Kind != "unknown" {
+		t.Fatalf("first failed readback claimed a current count: %v, %+v", err, zero)
+	}
+}
+
 func mirrorFixture() (wanted []Route, original []Route) {
 	broad := netip.MustParsePrefix("fd5e:db8:10::/48")
 	child := netip.MustParsePrefix("fd5e:db8:10:2::2000:0/112")

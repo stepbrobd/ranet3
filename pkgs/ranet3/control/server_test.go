@@ -690,7 +690,7 @@ func TestKernelLineWritesItsDurationOut(t *testing.T) {
 		"a clock ahead":       {-3 * time.Second, "last pass timestamped ahead of this clock"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			line := kernelLine(KernelStatus{Enabled: true, PassAt: time.Now().Add(-test.since)})
+			line := kernelDetailLine(KernelStatus{Enabled: true, PassAt: time.Now().Add(-test.since)})
 			if !strings.Contains(line, test.want) {
 				t.Errorf("the line reads %q, want it to carry %q", line, test.want)
 			}

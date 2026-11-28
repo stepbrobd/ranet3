@@ -434,6 +434,7 @@ type RegistryInfo struct {
 // that explains a prefix the mesh has and the kernel does not.
 type KernelStatus struct {
 	Enabled  bool   `json:"enabled"`
+	Disabled bool   `json:"disabled,omitempty"`
 	Where    string `json:"where,omitempty"`
 	Table    uint32 `json:"table,omitempty"`
 	Protocol uint8  `json:"protocol,omitempty"`
@@ -479,7 +480,30 @@ type KernelStatus struct {
 	// ExitPath is cap.exit via's path as the last pass judged it, absent
 	// outside mode 3
 	ExitPath *KernelExitPath `json:"exit_path,omitempty"`
+	Sourced  *KernelSourced  `json:"sourced,omitempty"`
 	Err      string          `json:"err,omitempty"`
+}
+
+// KernelSourced is the last committed readback of the named destination policy.
+// Rules is a cached count, not verified current while State is failing.
+type KernelSourced struct {
+	Named     int                   `json:"named"`
+	Supported int                   `json:"supported"`
+	Pairs     int                   `json:"pairs"`
+	Rules     int                   `json:"rules"`
+	Limited   bool                  `json:"limited"`
+	State     string                `json:"state"`
+	Error     string                `json:"error"`
+	Answers   []KernelSourcedAnswer `json:"answers"`
+}
+
+type KernelSourcedAnswer struct {
+	To           string `json:"to"`
+	From         string `json:"from,omitempty"`
+	Kind         string `json:"kind"`
+	Protection   bool   `json:"protection"`
+	MainPrefix   string `json:"main_prefix,omitempty"`
+	MainProtocol *uint8 `json:"main_protocol,omitempty"`
 }
 
 // KernelExit is cap.exit's mode as the reconciler's last pass ran it

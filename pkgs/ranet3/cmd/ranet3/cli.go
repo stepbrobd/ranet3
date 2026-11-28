@@ -49,16 +49,7 @@ node a question or tell it to act, through its control socket.`,
 	}
 	root.AddCommand(
 		daemonCommand(runDaemon),
-		r.command("status", "Show state of this node", `The output covers the identity and role of the node, the counts of its
-sessions, neighbors and routes, and the last pass of the route
-reconciler.`,
-			func(c *control.Client, w io.Writer, asJSON bool) error {
-				status, err := c.Status()
-				if err != nil {
-					return err
-				}
-				return emit(w, asJSON, status, func() { control.RenderStatus(w, status) })
-			}),
+		r.statusCommand(),
 		r.command("neighbors", "Show Babel neighbors and link costs", `Each row is a neighbor with the cost of its link, the cost it reports
 back, its round trip time and the number of routes it offers. The
 Dropped and Failed columns count the packets this node chose not to
@@ -156,6 +147,26 @@ func (r *reader) command(use, short, long string, run func(*control.Client, io.W
 		},
 	}
 	r.flags(cmd)
+	return cmd
+}
+
+func (r *reader) statusCommand() *cobra.Command {
+	var long bool
+	cmd := r.command("status", "Show state of this node", `The summary shows the node's identity, role and subsystem counts.
+Use --long for the reconciler's last pass and sourced policy answers.`, func(c *control.Client, w io.Writer, asJSON bool) error {
+		status, err := c.Status()
+		if err != nil {
+			return err
+		}
+		return emit(w, asJSON, status, func() {
+			if long {
+				control.RenderStatusLong(w, status)
+			} else {
+				control.RenderStatus(w, status)
+			}
+		})
+	})
+	cmd.Flags().BoolVar(&long, "long", false, "Show reconciler and sourced routing detail")
 	return cmd
 }
 

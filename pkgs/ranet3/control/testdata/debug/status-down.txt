@@ -8,7 +8,7 @@ TUN         ranet3 MTU 1400 queues 4
 Role        initiator, responder, transit
 Forwarding  IPv4 on IPv6 on
 Registry    /etc/ranet3/registry.json, 12 nodes in 1 organizations
-Kernel      table 100, 0 installed, last pass 3 minutes ago
+Kernel      not ready, 0 installed, 0 skipped, 0 refused while down, 0 writes owed
 Egress      off, this node carries no traffic for others
 Dialers     0 running
 Sessions    0
@@ -19,3 +19,4 @@ Segments    off
 Steering    off
 Transit     0 forwarded, 0 delivered, 0 dropped
 ESP         0 in, 0 dropped by their sessions, 0 datagrams refused
+Kernel: reconciler disabled

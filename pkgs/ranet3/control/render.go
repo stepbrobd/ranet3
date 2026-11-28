@@ -82,6 +82,9 @@ func RenderStatus(w io.Writer, s Status) {
 	for _, peer := range s.BabelNeighborsDown[:min(len(s.BabelNeighborsDown), statusNeighborNotes)] {
 		fmt.Fprintf(w, "Sessions: Babel neighbor down for %s\n", peer)
 	}
+	if note := kernelNote(s.Kernel); note != "" {
+		fmt.Fprintln(w, "Kernel: "+note)
+	}
 	if omitted := len(s.BabelNeighborsDown) - statusNeighborNotes; omitted > 0 {
 		fmt.Fprintf(w, "Sessions: %d more Babel neighbors down (see status --json)\n", omitted)
 	}
@@ -127,6 +130,78 @@ func role(s Status) string {
 }
 
 func kernelLine(k KernelStatus) string {
+	state := "off"
+	if k.Enabled {
+		state = "not ready"
+		if !k.Disabled && !k.PassAt.IsZero() && k.Err == "" && !k.HeldUnknown &&
+			len(k.Owed) == 0 && (k.Sourced == nil || k.Sourced.State == "active") {
+			state = "ready"
+		}
+	}
+	held := fmt.Sprint(k.Held)
+	if k.HeldUnknown {
+		held = "unknown"
+	}
+	return fmt.Sprintf("%s, %d installed, %d skipped, %s refused while down, %d writes owed",
+		state, k.Installed, k.Skipped, held, len(k.Owed))
+}
+
+func kernelNote(k KernelStatus) string {
+	switch {
+	case !k.Enabled:
+		return ""
+	case k.Err != "":
+		return k.Err
+	case k.Sourced != nil && k.Sourced.Error != "":
+		return k.Sourced.Error
+	case k.Disabled:
+		return "reconciler disabled"
+	case k.PassAt.IsZero():
+		return "no pass yet"
+	case k.HeldUnknown:
+		return "down-set readback unknown"
+	case len(k.Owed) != 0:
+		return "writes owed"
+	case k.Sourced != nil && k.Sourced.State != "active":
+		return "sourced policy " + k.Sourced.State
+	default:
+		return ""
+	}
+}
+
+// RenderStatusLong prints the same observation as the summary, followed by
+// the reconciler's last-pass detail and each distinct sourced answer.
+func RenderStatusLong(w io.Writer, s Status) {
+	RenderStatus(w, s)
+	k := s.Kernel
+	fmt.Fprintln(w, "Kernel: "+kernelDetailLine(k))
+	if k.Sourced == nil {
+		return
+	}
+	observed := k.Sourced
+	rules := fmt.Sprint(observed.Rules)
+	if observed.State == "failing" {
+		rules = "unknown"
+	}
+	fmt.Fprintf(w, "Sourced: %s, N %d named, S %d supported, P %d pairs, R %s, initial bounds 16 destinations, 16 pairs, at most 97 IPv6 rules including guards, limited %t\n",
+		observed.State, observed.Named, observed.Supported, observed.Pairs, rules, observed.Limited)
+	if observed.Error != "" {
+		fmt.Fprintln(w, "Sourced: "+observed.Error)
+	}
+	for _, answer := range observed.Answers {
+		source := ""
+		if answer.From != "" {
+			source = " from " + answer.From
+		}
+		winner := ""
+		if answer.MainPrefix != "" && answer.MainProtocol != nil {
+			winner = fmt.Sprintf(", main %s protocol %d", answer.MainPrefix, *answer.MainProtocol)
+		}
+		fmt.Fprintf(w, "Sourced: %s%s %s, protection %t%s\n", answer.To, source, answer.Kind, answer.Protection, winner)
+	}
+}
+
+func kernelDetailLine(k KernelStatus) string {
 	if !k.Enabled {
 		return "off, routes configured externally"
 	}

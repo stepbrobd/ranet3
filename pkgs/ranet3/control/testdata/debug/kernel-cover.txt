@@ -1,1 +1,1 @@
-interface utun6, 16 installed, zero-free cover for ipv4 and ipv6, no pass yet
+not ready, 16 installed, 0 skipped, 0 refused while down, 0 writes owed

@@ -85,7 +85,12 @@ func (c *Client) reconcilerNow() Reconciler {
 // comes from the capability the reconciler resolved rather than from the file,
 // so the defaults it filled in are the ones reported.
 func kernelStatus(routes *kernel.Reconciler) control.KernelStatus {
-	return kernelStatusOf(routes.Where(), routes.Table(), routes.Stats())
+	status := kernelStatusOf(routes.Where(), routes.Table(), routes.Stats())
+	status.Disabled = !routes.Enabled()
+	if sourced, ok := routes.SourcedStatus(); ok {
+		status.Sourced = sourcedStatus(sourced)
+	}
+	return status
 }
 
 // kernelStatusOf is kernelStatus of a reconciler at where under table whose last pass recorded stats
@@ -111,6 +116,28 @@ func kernelStatusOf(where string, table kernel.Table, stats kernel.Stats) contro
 		ExitPath:        kernelExitPath(stats.Path),
 		Err:             stats.Err,
 	}
+}
+
+func sourcedStatus(observed kernel.SourcedStatus) *control.KernelSourced {
+	status := &control.KernelSourced{
+		Named: observed.Named, Supported: observed.Supported, Pairs: observed.Pairs,
+		Rules: observed.Rules, Limited: observed.Limited, State: observed.State, Error: observed.Error,
+	}
+	for _, answer := range observed.Answers {
+		item := control.KernelSourcedAnswer{
+			To: answer.To.String(), Kind: answer.Kind, Protection: answer.Protection,
+		}
+		if answer.From.IsValid() {
+			item.From = answer.From.String()
+		}
+		if answer.Kind == "main" && answer.MainPrefix.IsValid() {
+			item.MainPrefix = answer.MainPrefix.String()
+			protocol := answer.MainProtocol
+			item.MainProtocol = &protocol
+		}
+		status.Answers = append(status.Answers, item)
+	}
+	return status
 }
 
 // kernelExit is cap.exit's mode as the control surface reports it, nil in mode off
