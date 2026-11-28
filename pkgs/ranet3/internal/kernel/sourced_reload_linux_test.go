@@ -8,6 +8,7 @@ package kernel
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/netip"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"ranet3.com/pkgs/ranet3/internal/events"
 	"ranet3.com/pkgs/ranet3/internal/netlink"
 	"ranet3.com/pkgs/ranet3/internal/netstack"
 	"ranet3.com/pkgs/ranet3/schema"
@@ -136,7 +138,7 @@ func (p *sourcedTransactionPlatform) sourcedObserved(r *Reconciler, routes []Rou
 	return status, err
 }
 
-func sourcedTransactionHarness(t *testing.T) (*Reconciler, *fakeKernel, *sourcedMirrorConn, func()) {
+func sourcedTransactionHarness(t *testing.T, buses ...*events.Bus) (*Reconciler, *fakeKernel, *sourcedMirrorConn, func()) {
 	t.Helper()
 	source, raw := writePlatform(t)
 	conn := &sourcedMirrorConn{fakeNetlink: raw}
@@ -151,8 +153,11 @@ func sourcedTransactionHarness(t *testing.T) (*Reconciler, *fakeKernel, *sourced
 	mesh := netstack.NewRouteTable()
 	mesh.Set(netip.Prefix{}, table.Sourced.To[0].Prefix, &netstack.Peer{ID: "synthetic"})
 	mesh.Set(netip.Prefix{}, netip.MustParsePrefix("fd5e:db8:10:3::/96"), &netstack.Peer{ID: "synthetic-next"})
-	r := newReconciler(table, Runtime{Interface: "tun7", Overlay: []schema.Prefix{schema.MustPrefix("fd5e:db8:10::/48")}},
-		table.Assigned(nil), mesh, plat)
+	runtime := Runtime{Interface: "tun7", Overlay: []schema.Prefix{schema.MustPrefix("fd5e:db8:10::/48")}}
+	if len(buses) != 0 {
+		runtime.Events = buses[0]
+	}
+	r := newReconciler(table, runtime, table.Assigned(nil), mesh, plat)
 	ctx, cancel := context.WithCancel(context.Background())
 	ended := make(chan error, 1)
 	go func() { ended <- r.Run(ctx) }()
@@ -178,9 +183,70 @@ func sourcedTransactionHarness(t *testing.T) (*Reconciler, *fakeKernel, *sourced
 	}
 }
 
-func TestSourcedReloadRestoresOwnedKernelStateAfterFailedAddressWrite(t *testing.T) {
-	r, ordinary, _, stop := sourcedTransactionHarness(t)
+func sourcedEventAttrs(bus *events.Bus) []map[string]string {
+	list := bus.Recorded(func(kind, _ string, _ []slog.Attr) bool { return kind == "kernel.sourced" }, 0)
+	attrs := make([]map[string]string, 0, len(list))
+	for _, event := range list {
+		attrs = append(attrs, event.Attrs)
+	}
+	return attrs
+}
+
+func TestSourcedEventsFollowCommittedReloadAndWithdrawal(t *testing.T) {
+	bus := events.New()
+	r, _, _, stop := sourcedTransactionHarness(t, bus)
 	defer stop()
+	wantActive := map[string]string{"state": "active", "named": "1", "supported": "1",
+		"pairs": "1", "rules": "4", "limited": "false"}
+	if got := sourcedEventAttrs(bus); len(got) != 1 || !maps.Equal(got[0], wantActive) {
+		t.Fatalf("first committed answer emitted %v, want %v", got, wantActive)
+	}
+	previous := r.Table()
+	next := previous
+	next.Sourced = &Sourced{To: []schema.Prefix{schema.MustPrefix("fd5e:db8:10:3::/96")}, ID: 201}
+	overlay := []schema.Prefix{schema.MustPrefix("fd5e:db8:10::/48")}
+	if err := r.SetTable(next, overlay, nil); err != nil {
+		t.Fatal(err)
+	}
+	if current, ok := r.SourcedStatus(); !ok || len(current.Answers) == 0 || current.Answers[0].To != next.Sourced.To[0].Prefix {
+		t.Fatalf("committed reload did not expose its new answer: %+v", current)
+	}
+	if got := sourcedEventAttrs(bus); len(got) != 2 || !maps.Equal(got[1], wantActive) {
+		t.Fatalf("changed committed answer emitted %v, want %v", got, wantActive)
+	}
+	if err := r.SetTable(next, overlay, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := sourcedEventAttrs(bus); len(got) != 2 {
+		t.Fatalf("equal committed answer produced %v", got)
+	}
+	rejected := next
+	rejected.Sourced = &Sourced{To: next.Sourced.To, ID: 202}
+	if err := r.SetTable(rejected, overlay, nil); err == nil || err.Error() != "kernel: cap.table.sourced id changed, restart to apply" {
+		t.Fatalf("changed sourced id was not refused: %v", err)
+	}
+	if got := sourcedEventAttrs(bus); len(got) != 2 || r.Table().Sourced.ID != 201 {
+		t.Fatalf("rejected reload emitted an event or changed the policy: %v", got)
+	}
+	next.Sourced = nil
+	if err := r.SetTable(next, overlay, nil); err != nil {
+		t.Fatal(err)
+	}
+	wantOff := map[string]string{"state": "off", "named": "0", "supported": "0",
+		"pairs": "0", "rules": "0", "limited": "false"}
+	if got := sourcedEventAttrs(bus); len(got) != 3 || !maps.Equal(got[2], wantOff) {
+		t.Fatalf("key withdrawal emitted %v, want %v", got, wantOff)
+	}
+}
+
+func TestSourcedReloadRestoresOwnedKernelStateAfterFailedAddressWrite(t *testing.T) {
+	bus := events.New()
+	r, ordinary, _, stop := sourcedTransactionHarness(t, bus)
+	defer stop()
+	beforeEvents := sourcedEventAttrs(bus)
+	if len(beforeEvents) != 1 {
+		t.Fatalf("first committed policy emitted %v", beforeEvents)
+	}
 	before, err := r.readSourcedReloadState(201)
 	if err != nil {
 		t.Fatal(err)
@@ -205,6 +271,9 @@ func TestSourcedReloadRestoresOwnedKernelStateAfterFailedAddressWrite(t *testing
 		!sameSourcedMembers(before.admission, after.admission) ||
 		!maps.Equal(before.owned, after.owned) || !reflect.DeepEqual(r.Table(), previous) {
 		t.Fatalf("rejected reload changed kernel state or table: read %v", err)
+	}
+	if got := sourcedEventAttrs(bus); !reflect.DeepEqual(got, beforeEvents) {
+		t.Fatalf("rejected address write published tentative policy: before %v, after %v", beforeEvents, got)
 	}
 }
 
@@ -275,8 +344,13 @@ func TestSourcedReloadConfirmsKernelAfterLostAcknowledgmentOrMainRead(t *testing
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, _, conn, stop := sourcedTransactionHarness(t)
+			bus := events.New()
+			r, _, conn, stop := sourcedTransactionHarness(t, bus)
 			defer stop()
+			beforeEvents := sourcedEventAttrs(bus)
+			if len(beforeEvents) != 1 {
+				t.Fatalf("first committed policy emitted %v", beforeEvents)
+			}
 			before, err := r.readSourcedReloadState(201)
 			if err != nil {
 				t.Fatal(err)
@@ -305,6 +379,9 @@ func TestSourcedReloadConfirmsKernelAfterLostAcknowledgmentOrMainRead(t *testing
 				!present || !reflect.DeepEqual(status, current) {
 				t.Fatalf("uncertain reload published or retained unconfirmed policy: read %v", err)
 			}
+			if got := sourcedEventAttrs(bus); !reflect.DeepEqual(got, beforeEvents) {
+				t.Fatalf("failed post-adoption readback published tentative policy: before %v, after %v", beforeEvents, got)
+			}
 			select {
 			case <-changed:
 				t.Fatal("failed reload published tentative answers")
@@ -315,8 +392,13 @@ func TestSourcedReloadConfirmsKernelAfterLostAcknowledgmentOrMainRead(t *testing
 }
 
 func TestSourcedReloadReportsDegradedWhenMainReadCannotRecover(t *testing.T) {
-	r, _, conn, stop := sourcedTransactionHarness(t)
+	bus := events.New()
+	r, _, conn, stop := sourcedTransactionHarness(t, bus)
 	defer stop()
+	beforeEvents := sourcedEventAttrs(bus)
+	if len(beforeEvents) != 1 {
+		t.Fatalf("first committed policy emitted %v", beforeEvents)
+	}
 	previous := r.Table()
 	next := previous
 	next.Sourced = &Sourced{To: []schema.Prefix{schema.MustPrefix("fd5e:db8:10:3::/96")}, ID: 201}
@@ -327,6 +409,9 @@ func TestSourcedReloadReportsDegradedWhenMainReadCannotRecover(t *testing.T) {
 		!strings.Contains(err.Error(), "could not be restored") ||
 		!present || status.State != "failing" || !reflect.DeepEqual(r.Table(), previous) {
 		t.Fatalf("persistent readback failure claimed a settled policy: error %v, status %+v", err, status)
+	}
+	if got := sourcedEventAttrs(bus); len(got) != len(beforeEvents)+1 || got[1]["state"] != "failing" {
+		t.Fatalf("failed restoration must emit only the degraded state: before %v, after %v", beforeEvents, got)
 	}
 }
 
@@ -343,8 +428,13 @@ func TestSourcedReloadRejectsUnverifiedRestorationReadback(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, _, conn, stop := sourcedTransactionHarness(t)
+			bus := events.New()
+			r, _, conn, stop := sourcedTransactionHarness(t, bus)
 			defer stop()
+			beforeEvents := sourcedEventAttrs(bus)
+			if len(beforeEvents) != 1 {
+				t.Fatalf("first committed policy emitted %v", beforeEvents)
+			}
 			previous := r.Table()
 			next := previous
 			next.Sourced = &Sourced{To: []schema.Prefix{schema.MustPrefix("fd5e:db8:10:3::/96")}, ID: 201}
@@ -359,6 +449,9 @@ func TestSourcedReloadRejectsUnverifiedRestorationReadback(t *testing.T) {
 				!strings.Contains(err.Error(), tc.detail) ||
 				!present || status.State != "failing" || !reflect.DeepEqual(r.Table(), previous) {
 				t.Fatalf("unverified kernel readback claimed unchanged policy: error %v, status %+v", err, status)
+			}
+			if got := sourcedEventAttrs(bus); len(got) != len(beforeEvents)+1 || got[1]["state"] != "failing" {
+				t.Fatalf("unverified restoration must emit only the degraded state: before %v, after %v", beforeEvents, got)
 			}
 		})
 	}

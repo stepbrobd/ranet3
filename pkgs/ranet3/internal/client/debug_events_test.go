@@ -5,9 +5,12 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"slices"
@@ -130,6 +133,49 @@ func TestEventsViewKeepsToItsQuery(t *testing.T) {
 		}
 	case <-time.After(convergeBudget):
 		t.Error("a follow of dials carried nothing")
+	}
+}
+
+func TestSourcedEventQueryAndFollowUseThePublicSelection(t *testing.T) {
+	c := testClient(t)
+	c.events.Emit("kernel.pass", "", slog.Int("rules", 6))
+	c.events.Emit("kernel.sourced", "", slog.String("state", "active"),
+		slog.Int("rules", 6), slog.Bool("limited", false))
+	byState := control.EventQuery{Kinds: []string{"kernel"}, Attrs: map[string]string{"state": "active"}}
+	matches := c.DebugEvents(byState)
+	if got := kindsOf(matches); !slices.Equal(got, []string{"kernel.sourced"}) {
+		t.Fatalf("parent kind and state filter returned %q", got)
+	}
+	var text strings.Builder
+	control.RenderEvent(&text, matches[0])
+	body, err := json.Marshal(matches[0])
+	if err != nil || !strings.Contains(text.String(), "kernel.sourced") ||
+		!strings.Contains(string(body), `"kernel.sourced"`) || !strings.Contains(string(body), `"rules":"6"`) {
+		t.Fatalf("event text or JSON lost kind or count: %s, %s, %v", text.String(), body, err)
+	}
+	response := httptest.NewRecorder()
+	control.Handler(c).ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		control.PathDebugEvents+"?kind=kernel&attr=state%3Dactive", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"kind":"kernel.sourced"`) ||
+		strings.Contains(response.Body.String(), `"kind":"kernel.pass"`) {
+		t.Fatalf("in-memory event socket lost the parent filter: %d, %s", response.Code, response.Body.String())
+	}
+	backlog, sub := c.DebugFollow(control.EventQuery{Kinds: []string{"kernel.sourced"},
+		Attrs: map[string]string{"limited": "true"}})
+	defer sub.Close()
+	if len(backlog) != 0 {
+		t.Fatalf("capacity follow included old active answer: %+v", backlog)
+	}
+	c.events.Emit("kernel.pass", "", slog.String("state", "limited"))
+	c.events.Emit("kernel.sourced", "", slog.String("state", "limited"),
+		slog.Int("rules", 7), slog.Bool("limited", true))
+	select {
+	case delivered := <-sub.C():
+		if delivered.Event.Kind != "kernel.sourced" || delivered.Event.Attrs["rules"] != "7" {
+			t.Errorf("capacity follow delivered %+v", delivered)
+		}
+	case <-time.After(convergeBudget):
+		t.Fatal("capacity follow missed the changed answer")
 	}
 }
 

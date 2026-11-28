@@ -4,6 +4,7 @@
 package kernel
 
 import (
+	"log/slog"
 	"net/netip"
 	"slices"
 )
@@ -59,6 +60,10 @@ func (r *Reconciler) publishSourced(next SourcedStatus) {
 		return
 	}
 	r.sourcedStatus.Store(&next)
+	r.rt.Events.Emit("kernel.sourced", "",
+		slog.String("state", next.State), slog.Int("named", next.Named),
+		slog.Int("supported", next.Supported), slog.Int("pairs", next.Pairs),
+		slog.Int("rules", next.Rules), slog.Bool("limited", next.Limited))
 	if channel := r.sourcedChanged.Load(); channel != nil {
 		select {
 		case *channel <- struct{}{}:
@@ -72,6 +77,9 @@ func (r *Reconciler) withdrawSourcedStatus() {
 	if r.sourcedStatus.Swap(nil) == nil {
 		return
 	}
+	r.rt.Events.Emit("kernel.sourced", "", slog.String("state", "off"),
+		slog.Int("named", 0), slog.Int("supported", 0), slog.Int("pairs", 0),
+		slog.Int("rules", 0), slog.Bool("limited", false))
 	if channel := r.sourcedChanged.Load(); channel != nil {
 		select {
 		case *channel <- struct{}{}:
